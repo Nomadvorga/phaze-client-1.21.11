@@ -154,7 +154,7 @@ public final class HudEditorClientTest implements FabricClientGameTest {
             check(hasAlpha(child, bounds(target)), "selected texture contains the actual widget: child="
                     + (child == null ? "null" : child.textureWidth + "x" + child.textureHeight + " anyAlpha="
                     + hasAlpha(child, new float[]{0, 0, child.textureWidth, child.textureHeight}))
-                    + " bounds=" + java.util.Arrays.toString(bounds(target)));
+                    + " bounds=" + java.util.Arrays.toString(bounds(target)) + pipelineState());
             return Frozen.capture();
         });
         float[] origin = context.computeOnClient(client -> bounds(target));
@@ -453,6 +453,21 @@ public final class HudEditorClientTest implements FabricClientGameTest {
     private static HudCachedTransform transform() { return (HudCachedTransform) hudField("editedHudTransform"); }
     private static HudBuffer editedBuffer() { return (HudBuffer) hudField("PHAZE_EDITED_HUD_BUFFER"); }
     private static Object hudField(String name) { return field(CustomHudRenderer.class, name, null); }
+
+    private static String pipelineState() {
+        StringBuilder out = new StringBuilder();
+        Class<?> batch = vorga.phazeclient.api.system.shape.batched.GuiBatch.class;
+        for (String name : new String[]{"flushing", "flushHold", "pending", "drawingMsdf"}) {
+            out.append(' ').append(name).append('=').append(field(batch, name, null));
+        }
+        Class<?> projection = vorga.phazeclient.api.system.draw.GuiProjection.class;
+        out.append(" target=").append(field(projection, "targetWidth", null)).append('x').append(field(projection, "targetHeight", null));
+        out.append(" scopes=").append(((java.util.Collection<?>) field(projection, "scopes", null)).size());
+        Object scissor = vorga.phazeclient.core.Main.getInstance().getScissorManager();
+        out.append(" scissors=").append(((java.util.Collection<?>) field(scissor.getClass(), "scissorStack", scissor)).size());
+        out.append(" override=").append(com.mojang.blaze3d.systems.RenderSystem.outputColorTextureOverride);
+        return out.toString();
+    }
 
     private static float[] bounds(Target target) {
         int index = target.index();

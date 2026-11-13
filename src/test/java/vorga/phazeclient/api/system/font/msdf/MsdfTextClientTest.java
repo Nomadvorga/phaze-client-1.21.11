@@ -2,6 +2,7 @@ package vorga.phazeclient.api.system.font.msdf;
 
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.ProjectionType;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTextureView;
@@ -67,12 +68,13 @@ public final class MsdfTextClientTest implements FabricClientGameTest {
                 for (boolean blend : new boolean[]{false, true}) {
                     for (boolean cull : new boolean[]{false, true}) {
                         seed(blend, cull);
-                        State before = State.capture();
+                        Global global = Global.capture();
                         MsdfRenderer.renderText(font, "AV Цвет HUD", 7, 0xAD12ABEF, matrix, 20, 20, 0);
+                        GuiBatch.flush();
                         check(!MsdfRenderer.isUsingFallback(), "normal rendering uses MSDF");
-                        State after = State.capture();
-                        check(before.equals(after), "successful draw restores incoming GL/cache state: before="
-                                + before.gl() + " after=" + after.gl());
+                        // Raster state is pipeline-owned in 1.21.11; the cache passes rely on must stay true.
+                        assertCacheCoherent("successful draw");
+                        check(global.equals(Global.capture()), "successful draw restores global render state");
                     }
                 }
                 earlyFailure(font, matrix);
@@ -89,6 +91,7 @@ public final class MsdfTextClientTest implements FabricClientGameTest {
             } catch (Throwable error) {
                 failure = error;
             } finally {
+                restoreDefaults();
                 MsdfFonts.onResourcesReloaded();
                 finished = true;
             }
@@ -168,14 +171,26 @@ public final class MsdfTextClientTest implements FabricClientGameTest {
         check(!MsdfRenderer.isUsingFallback(), "subsequent MSDF draw is not poisoned by the unfinished builder");
     }
 
+    /** Seeds through GlStateManager: raw GL calls would leave its cache stale for later passes and tests. */
     private static void seed(boolean blend, boolean cull) {
-        if (blend) GL11.glEnable(GL11.GL_BLEND); else GL11.glDisable(GL11.GL_BLEND);
-        if (cull) GL11.glEnable(GL11.GL_CULL_FACE); else GL11.glDisable(GL11.GL_CULL_FACE);
-        GL14.glBlendFuncSeparate(GL11.GL_ONE, GL11.GL_ZERO, GL11.GL_DST_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        GL11.glDisable(GL11.GL_DEPTH_TEST);
-        GL11.glDepthMask(false);
-        GL11.glDepthFunc(GL11.GL_GEQUAL);
-        GL11.glColorMask(true, false, true, false);
+        if (blend) GlStateManager._enableBlend(); else GlStateManager._disableBlend();
+        if (cull) GlStateManager._enableCull(); else GlStateManager._disableCull();
+        GlStateManager._blendFuncSeparate(GL11.GL_ONE, GL11.GL_ZERO, GL11.GL_DST_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        GlStateManager._disableDepthTest();
+        GlStateManager._depthMask(false);
+        GlStateManager._depthFunc(GL11.GL_GEQUAL);
+        GlStateManager._colorMask(true, false, true, false);
+    }
+
+    /** Hands vanilla defaults back to the cache so later tests start from normal raster state. */
+    private static void restoreDefaults() {
+        GlStateManager._disableBlend();
+        GlStateManager._disableCull();
+        GlStateManager._blendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, GL11.GL_ONE, GL11.GL_ZERO);
+        GlStateManager._enableDepthTest();
+        GlStateManager._depthMask(true);
+        GlStateManager._depthFunc(GL11.GL_LEQUAL);
+        GlStateManager._colorMask(true, true, true, true);
     }
 
     private record State(List<Integer> gl) {
@@ -220,6 +235,51 @@ public final class MsdfTextClientTest implements FabricClientGameTest {
 
     private static void near(float actual, float expected, String message) {
         check(Math.abs(actual - expected) < 0.001F, message);
+    }
+
+    private static void assertCacheCoherent(String stage) {
+        Object blend = cached("BLEND"), depth = cached("DEPTH"), cull = cached("CULL"), mask = cached("COLOR_MASK");
+        check(capability(blend) == GL11.glIsEnabled(GL11.GL_BLEND)
+                        && capability(depth) == GL11.glIsEnabled(GL11.GL_DEPTH_TEST)
+                        && capability(cull) == GL11.glIsEnabled(GL11.GL_CULL_FACE),
+                stage + " keeps GlStateManager's enable cache equal to GL");
+        check((boolean) member(depth, "mask") == GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK)
+                        && (int) member(depth, "func") == GL11.glGetInteger(GL11.GL_DEPTH_FUNC),
+                stage + " keeps the cached depth state equal to GL");
+        check((int) member(blend, "srcFactorRgb") == GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB)
+                        && (int) member(blend, "dstFactorRgb") == GL11.glGetInteger(GL14.GL_BLEND_DST_RGB)
+                        && (int) member(blend, "srcFactorAlpha") == GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA)
+                        && (int) member(blend, "dstFactorAlpha") == GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA),
+                stage + " keeps cached blend factors equal to GL");
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            var hardware = stack.malloc(4);
+            GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, hardware);
+            check((boolean) member(mask, "red") == (hardware.get(0) != 0) && (boolean) member(mask, "green") == (hardware.get(1) != 0)
+                            && (boolean) member(mask, "blue") == (hardware.get(2) != 0) && (boolean) member(mask, "alpha") == (hardware.get(3) != 0),
+                    stage + " keeps the cached colour mask equal to GL");
+        }
+    }
+
+    private static Object cached(String name) {
+        return member(null, GlStateManager.class, name);
+    }
+
+    private static boolean capability(Object state) {
+        return (boolean) member(member(state, "capState"), "state");
+    }
+
+    private static Object member(Object owner, String name) {
+        return member(owner, owner.getClass(), name);
+    }
+
+    private static Object member(Object owner, Class<?> type, String name) {
+        try {
+            Field field = type.getDeclaredField(name);
+            field.setAccessible(true);
+            return field.get(owner);
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("Cannot inspect GlStateManager." + name, failure);
+        }
     }
 
     private static void check(boolean condition, String message) {
