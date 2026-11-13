@@ -231,6 +231,87 @@ public final class CardSnapshotCache {
         }
     }
 
+    private static final RenderPipeline PREMULTIPLIED_PIPELINE = RenderPipeline.builder()
+            .withLocation(Identifier.of("phaze", "pipeline/card_snapshot_premultiplied"))
+            .withVertexShader(Identifier.of("minecraft", "core/position_tex_color"))
+            .withFragmentShader(Identifier.of("minecraft", "core/position_tex_color"))
+            .withUniform("DynamicTransforms", UniformType.UNIFORM_BUFFER)
+            .withUniform("Projection", UniformType.UNIFORM_BUFFER)
+            .withSampler("Sampler0")
+            .withVertexFormat(VertexFormats.POSITION_TEXTURE_COLOR, VertexFormat.DrawMode.QUADS)
+            .withBlend(BlendFunction.TRANSLUCENT_PREMULTIPLIED_ALPHA)
+            .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+            .withDepthWrite(false)
+            .withCull(false)
+            .build();
+
+    /** For captures of GUI special elements, whose composite already premultiplies colour by alpha. */
+    public static void blitPremultiplied(DrawContext context, Snapshot snapshot, float x, float y,
+                                         float widthGui, float heightGui, float alpha) {
+        if (snapshot == null || snapshot.fbo == null || !snapshot.populated) {
+            return;
+        }
+        BatchedRectangle.flushIfBatching();
+        Matrix4f matrix = GuiMatrix.mat4(context.getMatrices());
+        int a = Math.max(0, Math.min(255, Math.round(alpha * 255.0F)));
+        int color = (a << 24) | (a << 16) | (a << 8) | a;
+        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_TEXTURE_COLOR);
+        buffer.vertex(matrix, x, y, 0.0F).texture(0.0F, 1.0F).color(color);
+        buffer.vertex(matrix, x, y + heightGui, 0.0F).texture(0.0F, 0.0F).color(color);
+        buffer.vertex(matrix, x + widthGui, y + heightGui, 0.0F).texture(1.0F, 0.0F).color(color);
+        buffer.vertex(matrix, x + widthGui, y, 0.0F).texture(1.0F, 1.0F).color(color);
+        BuiltBuffer built = buffer.endNullable();
+        if (built == null) return;
+        vorga.phazeclient.api.system.draw.GuiProjection.begin();
+        try {
+            GpuDraw.draw(PREMULTIPLIED_PIPELINE, built, "Sampler0",
+                    snapshot.fbo.getColorAttachmentView(), FilterMode.LINEAR,
+                    vorga.phazeclient.api.system.draw.GuiProjection.guiModelView(BLIT_GUI_POSE));
+        } finally {
+            vorga.phazeclient.api.system.draw.GuiProjection.end();
+            built.close();
+        }
+    }
+
+    /**
+     * Blocking alpha readback, meant for a one-off validation: a shader pack can redirect the capture
+     * and leave the snapshot empty. An unreadable snapshot counts as visible, so it is never discarded blindly.
+     */
+    public static boolean hasVisiblePixels(Snapshot snapshot) {
+        if (snapshot == null || snapshot.fbo == null || !snapshot.populated) return false;
+        RenderSystem.assertOnRenderThread();
+        GpuTexture color = snapshot.fbo.getColorAttachment();
+        int bytes = color.getWidth(0) * color.getHeight(0) * 4;
+        com.mojang.blaze3d.buffers.GpuBuffer buffer = RenderSystem.getDevice().createBuffer(
+                () -> "phaze/card snapshot readback",
+                com.mojang.blaze3d.buffers.GpuBuffer.USAGE_COPY_DST | com.mojang.blaze3d.buffers.GpuBuffer.USAGE_MAP_READ,
+                bytes);
+        int[] result = {-1};
+        try {
+            RenderSystem.getDevice().createCommandEncoder().copyTextureToBuffer(color, buffer, 0L, () -> {
+                try (com.mojang.blaze3d.buffers.GpuBuffer.MappedView view =
+                             RenderSystem.getDevice().createCommandEncoder().mapBuffer(buffer, true, false)) {
+                    java.nio.ByteBuffer data = view.data();
+                    int visible = 0;
+                    for (int i = 3; i < bytes; i += 4) {
+                        if (data.get(i) != 0) { visible = 1; break; }
+                    }
+                    result[0] = visible;
+                } catch (RuntimeException failure) {
+                    result[0] = 1;
+                }
+            }, 0);
+            long deadline = System.nanoTime() + 1_000_000_000L;
+            while (result[0] < 0 && System.nanoTime() < deadline) {
+                RenderSystem.executePendingTasks();
+                Thread.onSpinWait();
+            }
+        } finally {
+            buffer.close();
+        }
+        return result[0] != 0;
+    }
+
     public static void blitRounded(
             DrawContext context,
             Snapshot snapshot,

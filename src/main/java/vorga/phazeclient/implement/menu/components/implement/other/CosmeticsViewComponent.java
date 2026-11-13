@@ -10,8 +10,11 @@ import net.minecraft.client.render.entity.state.EntityRenderState;
 import net.minecraft.entity.EntityPose;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.MathHelper;
+import com.mojang.blaze3d.systems.RenderSystem;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import vorga.phazeclient.api.system.snapshot.CardSnapshotCache;
+import vorga.phazeclient.mixins.GameRendererGuiAccessor;
 import vorga.phazeclient.api.system.animation.Animation;
 import vorga.phazeclient.api.system.animation.Direction;
 import vorga.phazeclient.api.system.animation.implement.DecelerateAnimation;
@@ -73,6 +76,9 @@ public final class CosmeticsViewComponent extends AbstractComponent {
     private EntityRenderState cachedPreviewRenderState;
     private int cachedPreviewHash;
     private long cachedPreviewStateNanos;
+    private final Object playerPreviewCacheKey = new Object();
+    private boolean playerPreviewValidated;
+    private boolean livePlayerPreview;
     private final Animation pageAnimation = new DecelerateAnimation().setMs(180).setValue(1);
     private final CheckComponent hideElytraToggle = new CheckComponent();
     private final Map<String, CardAnimations> cardAnimations = new HashMap<>();
@@ -558,8 +564,10 @@ public final class CosmeticsViewComponent extends AbstractComponent {
         long now = System.nanoTime();
         int hash = 31 * previewSelection.toLowerCase(Locale.ROOT).hashCode() + Float.floatToIntBits(previewYaw);
         EntityRenderState renderState = cachedPreviewRenderState;
+        boolean stateRefreshed = false;
         if (renderState == null || hash != cachedPreviewHash
                 || now - cachedPreviewStateNanos >= PLAYER_PREVIEW_REFRESH_NS) {
+            stateRefreshed = true;
             EntityPose previousPose = player.getPose();
             try {
                 player.setPose(EntityPose.STANDING);
@@ -583,7 +591,67 @@ public final class CosmeticsViewComponent extends AbstractComponent {
         int y2 = Math.round(boxY + PLAYER_PREVIEW_ABOVE + PLAYER_PREVIEW_BELOW);
         float translationX = (centerX - (x1 + x2) * 0.5F) / previewScale;
         float translationY = (bottomY - (y1 + y2) * 0.5F) / previewScale;
+        Vector3f translation = new Vector3f(translationX, translationY, 0.0F);
         BatchedRectangle.flushIfBatching();
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (livePlayerPreview || client.getWindow() == null) {
+            drawPlayerPreviewLive(context, renderState, previewScale, translation, bodyRotation, x1, y1, x2, y2);
+            return;
+        }
+
+        // The player plus an imported cosmetic is the most expensive thing in the menu; it is redrawn
+        // into a transparent snapshot whenever its render state refreshes and blitted otherwise.
+        int boxW = x2 - x1, boxH = y2 - y1;
+        float framebufferScale = (float) client.getWindow().getScaleFactor();
+        CardSnapshotCache.Snapshot snapshot = CardSnapshotCache.getOrCreate(playerPreviewCacheKey,
+                Math.max(1, Math.round(boxW * framebufferScale)), Math.max(1, Math.round(boxH * framebufferScale)));
+        if (stateRefreshed || !snapshot.populated) {
+            marker.phaze$previewAlpha(1.0F);
+            boolean captured = false;
+            CardSnapshotCache.beginCapture(snapshot, boxW, boxH);
+            try {
+                DrawContext capture = new DrawContext(client,
+                        ((GameRendererGuiAccessor) client.gameRenderer).phaze$getGuiState(), 0, 0);
+                capture.addEntity(renderState, previewScale, translation, bodyRotation, new Quaternionf(),
+                        0, 0, boxW, boxH);
+                captured = true;
+            } finally {
+                CardSnapshotCache.endCapture(captured);
+                vorga.phazeclient.api.system.shape.batched.GuiBatch.use(context);
+            }
+            if (!playerPreviewValidated) {
+                playerPreviewValidated = true;
+                if (!CardSnapshotCache.hasVisiblePixels(snapshot)) {
+                    // A shader pipeline redirected the capture; stay live.
+                    livePlayerPreview = true;
+                    marker.phaze$previewAlpha(alpha);
+                    drawPlayerPreviewLive(context, renderState, previewScale, translation, bodyRotation, x1, y1, x2, y2);
+                    return;
+                }
+            }
+        }
+
+        // Wide cosmetics are deliberately allowed to extend beyond the preview panel.
+        boolean scissorEnabled = GuiClipState.isEnabled();
+        int scissorX = GuiClipState.boxX(), scissorY = GuiClipState.boxY();
+        int scissorWidth = GuiClipState.boxWidth(), scissorHeight = GuiClipState.boxHeight();
+        if (scissorEnabled) {
+            GuiClipState.onDisable();
+            RenderSystem.disableScissorForRenderTypeDraws();
+        }
+        try {
+            CardSnapshotCache.blitPremultiplied(context, snapshot, x1, y1, boxW, boxH, alpha);
+        } finally {
+            if (scissorEnabled) {
+                GuiClipState.onBox(scissorX, scissorY, scissorWidth, scissorHeight);
+                RenderSystem.enableScissorForRenderTypeDraws(scissorX, scissorY, scissorWidth, scissorHeight);
+            }
+        }
+    }
+
+    private static void drawPlayerPreviewLive(DrawContext context, EntityRenderState renderState, float previewScale,
+                                              Vector3f translation, Quaternionf bodyRotation,
+                                              int x1, int y1, int x2, int y2) {
         boolean scissorEnabled = GuiClipState.isEnabled();
         int scissorX = GuiClipState.boxX(), scissorY = GuiClipState.boxY();
         int scissorWidth = GuiClipState.boxWidth(), scissorHeight = GuiClipState.boxHeight();
@@ -591,8 +659,7 @@ public final class CosmeticsViewComponent extends AbstractComponent {
             context.disableScissor();
         }
         try {
-            context.addEntity(renderState, previewScale,
-                    new Vector3f(translationX, translationY, 0.0F), bodyRotation,
+            context.addEntity(renderState, previewScale, translation, bodyRotation,
                     new Quaternionf(), x1, y1, x2, y2);
         } finally {
             if (scissorEnabled) {

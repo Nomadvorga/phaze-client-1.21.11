@@ -83,8 +83,7 @@ public final class GuiWorldBenchmarkClientTest implements FabricClientGameTest {
             context.waitTicks(10);
             System.out.println("GUI world bench screenshot: " + context.takeScreenshot("cosmetics-cached"));
             context.runOnClient(client -> System.out.println("GUI world bench preview state: live="
-                    + previewField("livePlayerPreview") + " validated=" + previewField("playerPreviewValidated")
-                    + " liveCards=" + previewField("livePreviewFallback")));
+                    + previewField("livePlayerPreview") + " validated=" + previewField("playerPreviewValidated")));
             context.runOnClient(client -> setLivePreview(true));
             context.waitTicks(2);
             System.out.println("GUI world bench screenshot: " + context.takeScreenshot("cosmetics-live"));
