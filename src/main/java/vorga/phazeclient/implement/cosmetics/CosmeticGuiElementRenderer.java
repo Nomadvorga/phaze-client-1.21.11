@@ -96,10 +96,12 @@ public final class CosmeticGuiElementRenderer
                            int width, int height) {
         RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
                 thumbnail.color, 0, thumbnail.depth, 1.0D);
-        RenderSystem.setProjectionMatrix(projection.set(width, height), ProjectionType.ORTHOGRAPHIC);
-        RenderSystem.outputColorTextureOverride = thumbnail.colorView;
-        RenderSystem.outputDepthTextureOverride = thumbnail.depthView;
-        try {
+        // Rasterised mid-frame, possibly inside a HUD or snapshot capture: restore the pass state it found.
+        try (vorga.phazeclient.api.system.hud.HudPassState ignored = vorga.phazeclient.api.system.hud.HudPassState.capture()) {
+            RenderSystem.setProjectionMatrix(projection.set(width, height), ProjectionType.ORTHOGRAPHIC);
+            RenderSystem.disableScissorForRenderTypeDraws();
+            RenderSystem.outputColorTextureOverride = thumbnail.colorView;
+            RenderSystem.outputDepthTextureOverride = thumbnail.depthView;
             MinecraftClient.getInstance().gameRenderer.getDiffuseLighting()
                     .setShaderLights(DiffuseLighting.Type.ENTITY_IN_UI);
             MatrixStack matrices = new MatrixStack();
@@ -107,9 +109,6 @@ public final class CosmeticGuiElementRenderer
             renderModel(state, matrices, width, height);
             vertexConsumers.draw();
             thumbnail.populated = true;
-        } finally {
-            RenderSystem.outputColorTextureOverride = null;
-            RenderSystem.outputDepthTextureOverride = null;
         }
     }
 

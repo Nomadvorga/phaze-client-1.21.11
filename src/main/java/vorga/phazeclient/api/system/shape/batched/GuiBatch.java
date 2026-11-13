@@ -210,6 +210,9 @@ public final class GuiBatch {
         pending = false;
         holdFlush();
         try (HudPassState ignored = HudPassState.capture()) {
+            // Vanilla GUI clips through its own scissor stack. Phaze's render-type scissor would otherwise also
+            // clip the special-element renderers (entities, cosmetics) that draw into their own textures.
+            RenderSystem.disableScissorForRenderTypeDraws();
             access.phaze$getGuiRenderer().render(access.phaze$getFogRenderer().getFogBuffer(FogRenderer.FogType.NONE));
         } finally {
             dropFlush();
