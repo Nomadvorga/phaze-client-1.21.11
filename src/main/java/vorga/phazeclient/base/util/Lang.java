@@ -3,11 +3,30 @@ package vorga.phazeclient.base.util;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Tiny i18n dispatcher for the menu's user-facing strings.
+ *
+ * <p>Two locales right now: {@link #EN} (default) and {@link #RU}.
+ * Add a third by extending the static map below; lookup falls back
+ * to the EN entry when a key is missing in the active locale, so a
+ * partially-translated locale still renders something sane instead
+ * of crashing on a {@code null} text.
+ *
+ * <p>Module names + category labels are intentionally NOT keyed
+ * here - the user explicitly asked for those to stay in their
+ * canonical (English) form regardless of locale.
+ *
+ * <p>Active locale is read from {@link
+ * vorga.phazeclient.implement.features.modules.client.Theme#language}
+ * which routes through SelectSetting + the standard config save
+ * pipeline, so the choice survives restarts.
+ */
 public final class Lang {
 
     public static final String EN = "English";
     public static final String RU = "Русский";
 
+    /** Active locale key. Set by Theme on every change-listener tick. */
     private static volatile String active = EN;
 
     public static void setActive(String locale) {
@@ -28,11 +47,23 @@ public final class Lang {
             String v = table.get(key);
             if (v != null) return v;
         }
-
+        // EN fallback: lookup in EN_TABLE so a missing translation
+        // returns the English text rather than a raw key tag like
+        // {@code "modal.share.title"}.
         String fallback = EN_TABLE.get(key);
         return fallback != null ? fallback : key;
     }
 
+    /**
+     * Translates a free-form English string to the active locale.
+     * Used by setting names / module descriptions where the source
+     * text IS the canonical English wording (no separate "key" /
+     * "value" pair). Falls back to the input when no translation
+     * is registered, so unknown strings render verbatim.
+     *
+     * <p>Module / category names skip this on purpose - the user
+     * explicitly asked for those to remain English.
+     */
     public static String translate(String english) {
         if (english == null || english.isEmpty()) return english;
         if (!RU.equals(active)) return english;
@@ -40,11 +71,15 @@ public final class Lang {
         return v != null ? v : english;
     }
 
+    /* ============================================================ */
+    /* Tables                                                        */
+    /* ============================================================ */
+
     private static final Map<String, String> EN_TABLE = new HashMap<>();
     private static final Map<String, String> RU_TABLE = new HashMap<>();
 
     static {
-
+        // Modal: SHARE
         en("modal.share.title", "Create Key");
         en("modal.share.subtitle.prefix", "Config");
         en("modal.share.placeholder", "Number of uses");
@@ -52,15 +87,18 @@ public final class Lang {
         en("modal.cloud.title", "Cloud Configs");
         en("modal.cloud.subtitle", "Share a config or load one by code");
 
+        // Modal: RENAME
         en("modal.rename.title", "Rename Config");
         en("modal.rename.placeholder", "New name");
         en("modal.rename.primary", "Save");
 
+        // Modal: IMPORT
         en("modal.import.title", "Load Config from Key");
         en("modal.import.subtitle", "Enter the code from your friend");
         en("modal.import.placeholder", "nomad-9wxf-49k7");
         en("modal.import.primary", "Load");
 
+        // Buttons / common
         en("button.cancel", "Cancel");
         en("status.loading", "Loading...");
         en("status.server_unreachable", "Server unreachable");
@@ -79,6 +117,8 @@ public final class Lang {
         en("status.cloud_bad_code", "Invalid code format");
         en("status.cloud_not_found", "Code not found");
         en("status.cloud_exhausted", "This code has run out of uses");
+        en("status.kicked_by_admin", "You were kicked by admin");
+        en("slider.snapped_to_default", "snapped to default");
         en("status.import_failed", "Import failed");
         en("status.imported_prefix", "Imported:");
         en("status.key_not_found", "Key not found");
@@ -92,6 +132,14 @@ public final class Lang {
         en("status.rename_failed", "Rename failed");
         en("status.rename_error", "Rename error");
 
+        // Module categories
+        en("category.all", "ALL");
+        en("category.hud", "HUD");
+        en("category.utilities", "UTILITIES");
+        en("category.other", "OTHER");
+        en("category.search", "SEARCH");
+
+        // Configs view kebab popup
         en("kebab.share", "Share");
         en("kebab.rename", "Rename");
         en("kebab.delete", "Delete");
@@ -100,13 +148,11 @@ public final class Lang {
         en("trap_timer.middle", " ends ");
         en("trap_timer.suffix", " seconds");
 
+        // Sidebar / general
         en("sidebar.new_config", "NEW CONFIG");
         en("sidebar.edit_hud", "EDIT HUD LAYOUT");
 
-        en("menu.tab.mods", "MODS");
-        en("menu.tab.settings", "SETTINGS");
-        en("menu.tab.cosmetics", "COSMETICS");
-        en("menu.tab.configs", "CONFIGS");
+        // Cosmetics
         en("cosmetics.title", "COSMETICS");
         en("cosmetics.subtitle", "Phaze cosmetic collection");
         en("cosmetics.category.all", "ALL");
@@ -129,6 +175,166 @@ public final class Lang {
         en("cosmetics.enter_world", "ENTER A WORLD TO PREVIEW");
         en("cosmetics.model_missing", "MODEL FILE NOT FOUND");
 
+        // Messenger
+        en("messenger.title", "GLOBAL CHAT");
+        en("messenger.global", "Global Chat");
+        en("messenger.friends", "Friends");
+        en("messenger.groups", "Groups");
+        en("messenger.direct", "Direct Messages");
+        en("messenger.requests", "Requests");
+        en("messenger.blocked", "Blocked");
+        en("messenger.no_friends", "No friends yet");
+        en("messenger.no_groups", "You don't have any groups yet");
+        en("messenger.no_requests", "You don't have any friend requests yet");
+        en("messenger.no_blocked", "You haven't blocked anyone");
+        en("messenger.no_selected", "No friend selected");
+        en("messenger.empty_global", "No messages yet. Say hello to the community.");
+        en("messenger.empty_direct", "No messages yet. Say hi first!");
+        en("messenger.input", "Write a message...");
+        en("messenger.message_placeholder", "Message...");
+        en("messenger.send", "SEND");
+        en("messenger.back", "BACK");
+        en("messenger.unblock", "Unblock");
+        en("messenger.online", "Online");
+        en("messenger.offline", "Offline");
+        en("messenger.message", "Message");
+        en("messenger.add_friend", "Add Friend");
+        en("messenger.remove_friend", "Remove friend");
+        en("messenger.block", "Block");
+        en("messenger.request_incoming", "Wants to be your friend");
+        en("messenger.no_conversations", "You don't have any direct messages yet");
+        en("messenger.error_send", "Send error! Please try again.");
+        en("messenger.error_blocked", "Send error! This message is not allowed.");
+        en("messenger.error_slowmode", "Slowmode: wait before sending again.");
+        en("messenger.error_server", "Send error! Chat server is unavailable.");
+        en("messenger.error_blocked_user", "This user is blocked.");
+        en("messenger.error_blocked_by", "Message not sent: this user has blocked you.");
+        en("messenger.error_recipient_blocked", "Message not sent: you blocked this user.");
+        en("messenger.error_user_not_found", "User not found.");
+        en("messenger.error_already_friend", "Friend request already exists.");
+        en("messenger.error_action", "Action failed. Please try again.");
+        en("messenger.error_point", "Could not change the point. Please try again.");
+        en("messenger.error_point_server", "The chat server does not support editing points yet.");
+        en("messenger.error_friend_required", "Add this player as a friend first.");
+        en("messenger.error_friend_unavailable", "This player can't be added.");
+        en("messenger.friend_request_sent", "Friend request sent.");
+        en("messenger.friend_added", "Added to friends.");
+        en("messenger.friend_request_already_sent", "You already sent a friend request.");
+        en("messenger.request_sent_button", "Request sent");
+        en("messenger.error_friend_slowdown", "Too many requests. Try again later.");
+        en("messenger.error_too_many_requests", "Too many unanswered requests.");
+        en("messenger.friend_request_self", "You can't send a friend request to yourself.");
+        en("messenger.mod_spam", "Spam and random letters are not allowed.");
+        en("messenger.mod_flood", "Flood is not allowed.");
+        en("messenger.mod_abuse", "Insults and swearing are not allowed.");
+        en("messenger.mod_politics", "Politics is not allowed in chat.");
+        en("messenger.mod_hate", "Nazism and racism are not allowed.");
+        en("messenger.mod_ads", "Advertising and invite links are not allowed.");
+        en("messenger.group_new", "New group");
+        en("messenger.group_name", "Group name");
+        en("messenger.group_create", "Create group");
+        en("messenger.group_invite_title", "Invite friends");
+        en("messenger.group_rename_title", "Rename group");
+        en("messenger.pick_friends", "Friends");
+        en("messenger.no_friends_to_invite", "No friends to invite yet");
+        en("messenger.invite", "Invite");
+        en("messenger.rename", "Rename");
+        en("messenger.save", "Save");
+        en("messenger.leave_group", "Leave group");
+        en("messenger.delete_group", "Delete group");
+        en("messenger.members", "Members");
+        en("messenger.members_count", "%d members · %d online");
+        en("messenger.role_owner", "Owner");
+        en("messenger.role_admin", "Admin");
+        en("messenger.make_admin", "Make admin");
+        en("messenger.remove_admin", "Remove admin");
+        en("messenger.make_owner", "Transfer ownership");
+        en("messenger.kick", "Remove from group");
+        en("messenger.invited_by", "Invited by %s");
+        en("messenger.group_no_messages", "No messages yet");
+        en("messenger.incoming", "Incoming");
+        en("messenger.outgoing", "Sent");
+        en("messenger.request_outgoing", "Waiting for an answer");
+        en("messenger.no_outgoing", "No sent requests yet");
+        en("messenger.nick_placeholder", "Player nickname");
+        en("messenger.add", "Add");
+        en("messenger.settings", "Messenger settings");
+        en("messenger.set_share", "Show where I play");
+        en("messenger.set_share_desc", "Friends and groups see a known server");
+        en("messenger.set_toasts", "In-game notifications");
+        en("messenger.set_toasts_desc", "Messages, requests and invites");
+        en("messenger.set_online", "Friend came online");
+        en("messenger.set_online_desc", "A notification when a friend joins");
+        en("messenger.set_dnd", "Do not disturb");
+        en("messenger.set_dnd_desc", "Hide every notification");
+        en("messenger.set_team", "Highlight group mates");
+        en("messenger.set_team_desc", "Name colour in the world and in tab");
+        en("messenger.ping_hint", "Group ping: G key, change it in Controls");
+        en("messenger.join", "Join server");
+        en("messenger.note_add", "Add a note");
+        en("messenger.note_placeholder", "A note only you see");
+        en("messenger.attach_here", "My position");
+        en("messenger.attach_death", "Death point");
+        en("messenger.attach_config", "Current config");
+        en("messenger.point_show", "Show");
+        en("messenger.point_hide", "Hide");
+        en("messenger.point_elsewhere", "Other server");
+        en("messenger.config_apply", "Apply");
+        en("messenger.config_card", "Config");
+        en("messenger.hidden_message", "Message from a blocked user");
+        en("messenger.toast_online", "is online");
+        en("messenger.toast_request", "wants to be your friend");
+        en("messenger.toast_invite", "invites you to");
+        en("messenger.toast_ping", "marked a point");
+        en("messenger.toast_point", "shared a point");
+        en("messenger.dim_overworld", "Overworld");
+        en("messenger.dim_nether", "Nether");
+        en("messenger.dim_end", "End");
+        en("messenger.toast_mention", "mentioned you");
+        en("messenger.point_save", "Save");
+        en("messenger.point_edit", "Edit");
+        en("waypoints.title_new", "New Waypoint");
+        en("waypoints.title_edit", "Edit Waypoint");
+        en("waypoints.title_send", "Share Waypoint");
+        en("waypoints.send", "Send");
+        en("waypoints.server", "Server:");
+        en("waypoints.no_server", "Points can be shared only from a server");
+        en("waypoints.name", "Name");
+        en("waypoints.name_placeholder", "Waypoint name");
+        en("waypoints.coordinates", "Coordinates");
+        en("waypoints.set_current", "Set to current");
+        en("waypoints.dimension", "Dimension");
+        en("waypoints.display", "Display Options");
+        en("waypoints.show_text", "Show Text");
+        en("waypoints.highlight", "Highlight Block");
+        en("waypoints.show_beam", "Show Beam");
+        en("waypoints.show_distance", "Show Distance");
+        en("waypoints.color", "Color");
+        en("waypoints.change", "Change");
+        en("waypoints.save", "Save");
+        en("waypoints.delete", "Delete");
+        en("waypoints.delete_confirm", "Sure?");
+        en("waypoints.created_today", "Created today");
+        en("waypoints.created_yesterday", "Created yesterday");
+        en("waypoints.created_days", "Created %d days ago");
+        en("waypoints.unsaved", "Not saved yet");
+        en("waypoints.invalid_coords", "Enter valid coordinates");
+        en("waypoints.limit", "This world already has 100 waypoints");
+        en("waypoints.no_world", "Join a world first");
+        en("waypoints.default_name", "Waypoint");
+        en("waypoints.death", "Death");
+        en("waypoints.add", "Add");
+        en("waypoints.empty", "No waypoints in this world yet");
+        en("waypoints.join_world", "Join a world to see its waypoints");
+        en("messenger.error_too_many_groups", "You can be in 10 groups at most.");
+        en("messenger.error_group_full", "This group is full.");
+        en("messenger.error_group_name", "Pick another group name.");
+        en("messenger.error_group_forbidden", "You can't do that in this group.");
+        en("messenger.error_slowdown", "Too fast. Try again in a moment.");
+        en("messenger.error_not_friend", "You can invite only your friends.");
+        en("messenger.confirm", "Click again to confirm");
+
+        // ---- RU translations -----------------------------------
         ru("modal.cloud.title", "Облачные конфиги");
         ru("modal.cloud.subtitle", "Поделись конфигом или загрузи по коду");
         ru("modal.share.title", "Создание ключа");
@@ -163,6 +369,8 @@ public final class Lang {
         ru("status.cloud_bad_code", "Неверный формат кода");
         ru("status.cloud_not_found", "Код не найден");
         ru("status.cloud_exhausted", "У этого кода закончились использования");
+        ru("status.kicked_by_admin", "Вы были кикнуты админом");
+        ru("slider.snapped_to_default", "залипло на дефолте");
         ru("status.import_failed", "Не удалось импортировать");
         ru("status.imported_prefix", "Импортирован:");
         ru("status.key_not_found", "Ключ не найден");
@@ -176,6 +384,12 @@ public final class Lang {
         ru("status.rename_failed", "Не удалось переименовать");
         ru("status.rename_error", "Ошибка переименования");
 
+        ru("category.all", "ВСЕ");
+        ru("category.hud", "HUD");
+        ru("category.utilities", "УТИЛИТЫ");
+        ru("category.other", "ПРОЧЕЕ");
+        ru("category.search", "ПОИСК");
+
         ru("kebab.share", "Поделиться");
         ru("kebab.rename", "Переименовать");
         ru("kebab.delete", "Удалить");
@@ -187,10 +401,6 @@ public final class Lang {
         ru("sidebar.new_config", "НОВЫЙ КОНФИГ");
         ru("sidebar.edit_hud", "РЕДАКТОР HUD");
 
-        ru("menu.tab.mods", "МОДЫ");
-        ru("menu.tab.settings", "НАСТРОЙКИ");
-        ru("menu.tab.cosmetics", "КОСМЕТИКА");
-        ru("menu.tab.configs", "КОНФИГИ");
         ru("cosmetics.title", "КОСМЕТИКА");
         ru("cosmetics.subtitle", "Коллекция косметики Phaze");
         ru("cosmetics.category.all", "ВСЁ");
@@ -212,6 +422,164 @@ public final class Lang {
         ru("cosmetics.remove", "СНЯТЬ");
         ru("cosmetics.enter_world", "ВОЙДИТЕ В МИР ДЛЯ ПРОСМОТРА");
         ru("cosmetics.model_missing", "ФАЙЛ МОДЕЛИ НЕ НАЙДЕН");
+
+        ru("messenger.title", "ГЛОБАЛЬНЫЙ ЧАТ");
+        ru("messenger.global", "Глобальный чат");
+        ru("messenger.friends", "Друзья");
+        ru("messenger.groups", "Группы");
+        ru("messenger.direct", "Личные сообщения");
+        ru("messenger.requests", "Заявки");
+        ru("messenger.blocked", "Заблокированные");
+        ru("messenger.no_friends", "Друзей пока нет");
+        ru("messenger.no_groups", "У тебя пока нет групп");
+        ru("messenger.no_requests", "У тебя пока нет заявок в друзья");
+        ru("messenger.no_blocked", "Заблокированных пользователей пока нет");
+        ru("messenger.no_selected", "Друг не выбран");
+        ru("messenger.empty_global", "Сообщений пока нет. Поздоровайся с сообществом.");
+        ru("messenger.empty_direct", "Сообщений пока нет. Напиши первым!");
+        ru("messenger.input", "Напиши сообщение...");
+        ru("messenger.message_placeholder", "Сообщение...");
+        ru("messenger.send", "ОТПРАВИТЬ");
+        ru("messenger.back", "НАЗАД");
+        ru("messenger.unblock", "Разблокировать");
+        ru("messenger.online", "В сети");
+        ru("messenger.offline", "Не в сети");
+        ru("messenger.message", "Написать");
+        ru("messenger.add_friend", "Добавить в друзья");
+        ru("messenger.remove_friend", "Удалить друга");
+        ru("messenger.block", "Заблокировать");
+        ru("messenger.request_incoming", "Хочет добавить тебя в друзья");
+        ru("messenger.no_conversations", "У тебя пока нет личных сообщений");
+        ru("messenger.error_send", "Ошибка отправки! Попробуй ещё раз.");
+        ru("messenger.error_blocked", "Ошибка отправки! Такое сообщение запрещено.");
+        ru("messenger.error_slowmode", "Подожди перед следующей отправкой.");
+        ru("messenger.error_server", "Ошибка отправки! Сервер чата недоступен.");
+        ru("messenger.error_blocked_user", "Этот пользователь заблокирован.");
+        ru("messenger.error_blocked_by", "Сообщение не отправлено: этот пользователь заблокировал вас.");
+        ru("messenger.error_recipient_blocked", "Сообщение не отправлено: вы заблокировали этого пользователя.");
+        ru("messenger.error_user_not_found", "Пользователь не найден.");
+        ru("messenger.error_already_friend", "Заявка уже существует.");
+        ru("messenger.error_action", "Не удалось выполнить действие. Попробуй ещё раз.");
+        ru("messenger.error_point", "Не удалось изменить точку. Попробуй ещё раз.");
+        ru("messenger.error_point_server", "Сервер чата пока не поддерживает изменение точек.");
+        ru("messenger.error_friend_required", "Сначала добавь этого игрока в друзья.");
+        ru("messenger.error_friend_unavailable", "Этого игрока нельзя добавить.");
+        ru("messenger.friend_request_sent", "Заявка отправлена.");
+        ru("messenger.friend_added", "Добавлен в друзья.");
+        ru("messenger.friend_request_already_sent", "Вы уже отправили заявку в друзья.");
+        ru("messenger.request_sent_button", "Заявка отправлена");
+        ru("messenger.error_friend_slowdown", "Слишком много заявок. Попробуй позже.");
+        ru("messenger.error_too_many_requests", "Слишком много заявок без ответа.");
+        ru("messenger.friend_request_self", "Нельзя отправить заявку в друзья самому себе.");
+        ru("messenger.mod_spam", "Спам и бессмысленный набор букв запрещены.");
+        ru("messenger.mod_flood", "Флуд запрещён.");
+        ru("messenger.mod_abuse", "Оскорбления и мат запрещены.");
+        ru("messenger.mod_politics", "Политика в чате запрещена.");
+        ru("messenger.mod_hate", "Нацизм и расизм запрещены.");
+        ru("messenger.mod_ads", "Реклама и ссылки-приглашения запрещены.");
+        ru("messenger.group_new", "Новая группа");
+        ru("messenger.group_name", "Название группы");
+        ru("messenger.group_create", "Создать группу");
+        ru("messenger.group_invite_title", "Пригласить друзей");
+        ru("messenger.group_rename_title", "Переименовать группу");
+        ru("messenger.pick_friends", "Друзья");
+        ru("messenger.no_friends_to_invite", "Пока некого пригласить");
+        ru("messenger.invite", "Пригласить");
+        ru("messenger.rename", "Переименовать");
+        ru("messenger.save", "Сохранить");
+        ru("messenger.leave_group", "Выйти из группы");
+        ru("messenger.delete_group", "Удалить группу");
+        ru("messenger.members", "Участники");
+        ru("messenger.members_count", "Участников: %d · в сети: %d");
+        ru("messenger.role_owner", "Владелец");
+        ru("messenger.role_admin", "Админ");
+        ru("messenger.make_admin", "Сделать админом");
+        ru("messenger.remove_admin", "Снять админа");
+        ru("messenger.make_owner", "Передать владение");
+        ru("messenger.kick", "Исключить");
+        ru("messenger.invited_by", "Приглашает %s");
+        ru("messenger.group_no_messages", "Сообщений пока нет");
+        ru("messenger.incoming", "Входящие");
+        ru("messenger.outgoing", "Исходящие");
+        ru("messenger.request_outgoing", "Ожидает ответа");
+        ru("messenger.no_outgoing", "Отправленных заявок пока нет");
+        ru("messenger.nick_placeholder", "Ник игрока");
+        ru("messenger.add", "Добавить");
+        ru("messenger.settings", "Настройки мессенджера");
+        ru("messenger.set_share", "Показывать, где я играю");
+        ru("messenger.set_share_desc", "Друзья и группы увидят известный сервер");
+        ru("messenger.set_toasts", "Уведомления в игре");
+        ru("messenger.set_toasts_desc", "Сообщения, заявки и приглашения");
+        ru("messenger.set_online", "Друг в сети");
+        ru("messenger.set_online_desc", "Уведомлять, когда друг заходит");
+        ru("messenger.set_dnd", "Не беспокоить");
+        ru("messenger.set_dnd_desc", "Скрыть все уведомления");
+        ru("messenger.set_team", "Подсвечивать участников групп");
+        ru("messenger.set_team_desc", "Цвет ника в мире и в табе");
+        ru("messenger.ping_hint", "Пинг для группы — клавиша G, меняется в Управлении");
+        ru("messenger.join", "Зайти на сервер");
+        ru("messenger.note_add", "Добавить заметку");
+        ru("messenger.note_placeholder", "Заметка видна только тебе");
+        ru("messenger.attach_here", "Моя позиция");
+        ru("messenger.attach_death", "Точка смерти");
+        ru("messenger.attach_config", "Текущий конфиг");
+        ru("messenger.point_show", "Показать");
+        ru("messenger.point_hide", "Скрыть");
+        ru("messenger.point_elsewhere", "Другой сервер");
+        ru("messenger.config_apply", "Применить");
+        ru("messenger.config_card", "Конфиг");
+        ru("messenger.hidden_message", "Сообщение от заблокированного");
+        ru("messenger.toast_online", "в сети");
+        ru("messenger.toast_request", "хочет добавить тебя в друзья");
+        ru("messenger.toast_invite", "приглашает в");
+        ru("messenger.toast_ping", "отметил точку");
+        ru("messenger.toast_point", "поделился точкой");
+        ru("messenger.dim_overworld", "Верхний мир");
+        ru("messenger.dim_nether", "Незер");
+        ru("messenger.dim_end", "Энд");
+        ru("messenger.toast_mention", "упомянул тебя");
+        ru("messenger.point_save", "Сохранить");
+        ru("messenger.point_edit", "Изменить");
+        ru("waypoints.title_new", "Новая точка");
+        ru("waypoints.title_edit", "Редактирование точки");
+        ru("waypoints.title_send", "Отправить точку");
+        ru("waypoints.send", "Отправить");
+        ru("waypoints.server", "Сервер:");
+        ru("waypoints.no_server", "Делиться точками можно только с сервера");
+        ru("waypoints.name", "Название");
+        ru("waypoints.name_placeholder", "Название точки");
+        ru("waypoints.coordinates", "Координаты");
+        ru("waypoints.set_current", "Текущие");
+        ru("waypoints.dimension", "Измерение");
+        ru("waypoints.display", "Отображение");
+        ru("waypoints.show_text", "Название");
+        ru("waypoints.highlight", "Подсветка блока");
+        ru("waypoints.show_beam", "Луч");
+        ru("waypoints.show_distance", "Расстояние");
+        ru("waypoints.color", "Цвет");
+        ru("waypoints.change", "Изменить");
+        ru("waypoints.save", "Сохранить");
+        ru("waypoints.delete", "Удалить");
+        ru("waypoints.delete_confirm", "Точно?");
+        ru("waypoints.created_today", "Создана сегодня");
+        ru("waypoints.created_yesterday", "Создана вчера");
+        ru("waypoints.created_days", "Создана %d дн. назад");
+        ru("waypoints.unsaved", "Ещё не сохранена");
+        ru("waypoints.invalid_coords", "Введи корректные координаты");
+        ru("waypoints.limit", "В этом мире уже 100 точек");
+        ru("waypoints.no_world", "Сначала зайди в мир");
+        ru("waypoints.default_name", "Точка");
+        ru("waypoints.death", "Смерть");
+        ru("waypoints.add", "Добавить");
+        ru("waypoints.empty", "В этом мире пока нет точек");
+        ru("waypoints.join_world", "Зайди в мир, чтобы увидеть его точки");
+        ru("messenger.error_too_many_groups", "Можно состоять максимум в 10 группах.");
+        ru("messenger.error_group_full", "В группе нет мест.");
+        ru("messenger.error_group_name", "Выбери другое название.");
+        ru("messenger.error_group_forbidden", "В этой группе так нельзя.");
+        ru("messenger.error_slowdown", "Слишком часто. Попробуй чуть позже.");
+        ru("messenger.error_not_friend", "Приглашать можно только друзей.");
+        ru("messenger.confirm", "Нажми ещё раз");
     }
 
     private static final Map<String, String> SETTING_TRANSLATIONS = new HashMap<>();
@@ -268,12 +636,22 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("Background Blur Radius", "Радиус размытия фона");
         SETTING_TRANSLATIONS.put("Background Opacity", "Прозрачность фона");
         SETTING_TRANSLATIONS.put("Background Preset", "Стиль фона");
+        SETTING_TRANSLATIONS.put("Custom Background Color", "Свой цвет");
+        SETTING_TRANSLATIONS.put("Gradient Start Color", "Первый цвет градиента");
+        SETTING_TRANSLATIONS.put("Gradient End Color", "Второй цвет градиента");
+        SETTING_TRANSLATIONS.put("Gradient Speed", "Скорость градиента");
+        SETTING_TRANSLATIONS.put("Gradient Direction", "Направление градиента");
         SETTING_TRANSLATIONS.put("Base Color", "Базовый цвет");
         SETTING_TRANSLATIONS.put("Batches all 2D HUD elements into a single FBO and refreshes at a throttled rate", "Объединяет 2D-элементы HUD в один FBO и ограничивает частоту обновления");
         SETTING_TRANSLATIONS.put("Better Death", "Улучшенная смерть");
         SETTING_TRANSLATIONS.put("Better F3", "Улучшенный F3");
         SETTING_TRANSLATIONS.put("Bind", "Бинд");
-
+        // Per-slot Binds module labels - the module preallocates 8
+        // slots numbered 1..8 and synthesises three settings per
+        // slot ({@code "Bind N"} section, {@code "Bind N Key"} bind,
+        // {@code "Bind N Message"} text). Adding the localized
+        // entries here lets the existing Lang.translate dispatch
+        // pick them up without touching the module's storage keys.
         for (int i = 1; i <= 8; i++) {
             SETTING_TRANSLATIONS.put("Bind " + i, "Бинд " + i);
             SETTING_TRANSLATIONS.put("Bind " + i + " Key", "Бинд " + i + " - клавиша");
@@ -320,6 +698,7 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("Cloud Height", "Высота облаков");
         SETTING_TRANSLATIONS.put("Clouds", "Облака");
         SETTING_TRANSLATIONS.put("Collapse Repeats", "Сворачивать повторы");
+        SETTING_TRANSLATIONS.put("Comfortable Text Selection", "Комфортное выделение текста");
         SETTING_TRANSLATIONS.put("Drag-select text in any input field with the mouse - chat, search bars, Sodium options, etc.", "Выделение текста мышью в любых полях ввода: чат, поиск, настройки Sodium и т.д.");
         SETTING_TRANSLATIONS.put("Color", "Цвет");
         SETTING_TRANSLATIONS.put("Color By Shulker", "Цвет по шалкеру");
@@ -412,6 +791,7 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("Durability Threshold", "Порог прочности");
         SETTING_TRANSLATIONS.put("Duration", "Длительность");
         SETTING_TRANSLATIONS.put("Dynamic", "Динамический");
+        SETTING_TRANSLATIONS.put("Dynamic Cursor", "Динамический курсор");
         SETTING_TRANSLATIONS.put("Dynamic Ping Color", "Динамический цвет пинга");
         SETTING_TRANSLATIONS.put("Easing", "Сглаживание");
         SETTING_TRANSLATIONS.put("Effect Duration", "Длительность эффекта");
@@ -426,7 +806,6 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("F5 Animation Speed", "Скорость анимации F5");
         SETTING_TRANSLATIONS.put("F5 Interpolation", "Интерполяция F5");
         SETTING_TRANSLATIONS.put("Fade Distance", "Дистанция затухания");
-        SETTING_TRANSLATIONS.put("Fade Style", "Стиль затухания");
         SETTING_TRANSLATIONS.put("Fake FPS", "Фейк FPS");
         SETTING_TRANSLATIONS.put("Fast Exp", "Быстрый опыт");
         SETTING_TRANSLATIONS.put("Fast Swap", "Быстрая смена");
@@ -525,9 +904,25 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("Keybind", "Бинд");
         SETTING_TRANSLATIONS.put("Language", "Язык");
         SETTING_TRANSLATIONS.put("Last modified", "Изменён");
-
+        // ---- Theme names ----
+        // Translated as a friendly Russian phrase rather than a
+        // literal word-for-word so the picker reads naturally in
+        // the same way the English originals do (e.g. "Mocha Gold"
+        // is a coffee-and-gold mood, not "мокка золото"). Each
+        // entry is also a fixed key in {@code MenuPalettes.byName}
+        // - storage stays English so configs save / load on either
+        // locale, only the displayed label changes.
         SETTING_TRANSLATIONS.put("Lunar Blue", "Синий Лунар");
         SETTING_TRANSLATIONS.put("Mocha Gold", "Мокка с золотом");
+        SETTING_TRANSLATIONS.put("Custom Color", "Свой цвет");
+        SETTING_TRANSLATIONS.put("Gradient", "Градиент");
+        SETTING_TRANSLATIONS.put("Left to Right", "Слева направо");
+        SETTING_TRANSLATIONS.put("Right to Left", "Справа налево");
+        SETTING_TRANSLATIONS.put("Top to Bottom", "Сверху вниз");
+        SETTING_TRANSLATIONS.put("Bottom to Top", "Снизу вверх");
+        SETTING_TRANSLATIONS.put("Diagonal Down", "По диагонали вниз");
+        SETTING_TRANSLATIONS.put("Diagonal Up", "По диагонали вверх");
+        SETTING_TRANSLATIONS.put("Pulse", "Пульсация");
         SETTING_TRANSLATIONS.put("Rose Quartz", "Розовый кварц");
         SETTING_TRANSLATIONS.put("Emerald Frost", "Изумрудный иней");
         SETTING_TRANSLATIONS.put("Arctic Mint", "Арктическая мята");
@@ -549,7 +944,14 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("Violet", "Фиолетовый");
         SETTING_TRANSLATIONS.put("Ocean", "Океан");
         SETTING_TRANSLATIONS.put("Layout", "Расположение");
-
+        // ---- Select-value lexicon ----
+        // Centralised pool of localised choice labels used by every
+        // SelectSetting in the project. Stored here (instead of next
+        // to each module) so the wording can be tuned in one place;
+        // storage keys remain English so saved configs are
+        // language-agnostic and any
+        // {@code .getSelected().equals("Linear")}-style logic in
+        // module code keeps working untouched.
         SETTING_TRANSLATIONS.put("Linear", "Линейная");
         SETTING_TRANSLATIONS.put("Fast", "Быстрая");
         SETTING_TRANSLATIONS.put("Balanced", "Сбалансированная");
@@ -605,51 +1007,76 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("Hindi", "Хинди");
         SETTING_TRANSLATIONS.put("Vietnamese", "Вьетнамский");
         SETTING_TRANSLATIONS.put("Indonesian", "Индонезийский");
-
+        // ArmorHud / RectHudModule durability mode
         SETTING_TRANSLATIONS.put("Units", "Единицы");
         SETTING_TRANSLATIONS.put("Percent", "Проценты");
-
+        // Consumable.layout
         SETTING_TRANSLATIONS.put("Column", "Столбец");
         SETTING_TRANSLATIONS.put("Table", "Таблица");
-
+        // InventoryHud.source
         SETTING_TRANSLATIONS.put("Main", "Основной");
         SETTING_TRANSLATIONS.put("Ender Chest", "Эндер-сундук");
-
+        // MemoryHud.format
         SETTING_TRANSLATIONS.put("Percentage", "Проценты");
         SETTING_TRANSLATIONS.put("Megabytes", "Мегабайты");
         SETTING_TRANSLATIONS.put("Gigabytes", "Гигабайты");
-
+        // MovementSpeedHud.precision
         SETTING_TRANSLATIONS.put("Nearest", "Ближайшее");
         SETTING_TRANSLATIONS.put("1 Decimal", "1 знак");
         SETTING_TRANSLATIONS.put("2 Decimals", "2 знака");
         SETTING_TRANSLATIONS.put("3 Decimals", "3 знака");
-
-        SETTING_TRANSLATIONS.put("Follow Mouse", "Следовать за мышью");
-        SETTING_TRANSLATIONS.put("Auto Rotate", "Авто-вращение");
-        SETTING_TRANSLATIONS.put("Static", "Статично");
-
+        // PaperDoll
+        SETTING_TRANSLATIONS.put("Doll", "Кукла");
+        SETTING_TRANSLATIONS.put("Doll Head Locked", "Голова куклы");
+        SETTING_TRANSLATIONS.put("How the doll's head reacts to your movement", "Как голова куклы реагирует на ваши движения");
+        SETTING_TRANSLATIONS.put("Floaty", "Плавающая");
+        SETTING_TRANSLATIONS.put("Locked", "Зафиксирована");
+        SETTING_TRANSLATIONS.put("Floaty Horizontal", "Плавающая (только по горизонтали)");
+        SETTING_TRANSLATIONS.put("Static Horizontal", "Статичная (только по горизонтали)");
+        SETTING_TRANSLATIONS.put("Looking Sides", "Поворот в стороны");
+        SETTING_TRANSLATIONS.put("How far the doll is turned to the left/right", "Насколько кукла повёрнута влево/вправо");
+        SETTING_TRANSLATIONS.put("Looking Up/Down", "Наклон вверх/вниз");
+        SETTING_TRANSLATIONS.put("How far the doll is tilted up/down", "Насколько кукла наклонена вверх/вниз");
+        SETTING_TRANSLATIONS.put("Behavior", "Поведение");
+        SETTING_TRANSLATIONS.put("Lock Elytra Rotation", "Фиксировать поворот на элитрах");
+        SETTING_TRANSLATIONS.put("Do not rotate the doll with your view while flying with an elytra", "Не поворачивать куклу за взглядом во время полёта на элитрах");
+        SETTING_TRANSLATIONS.put("Lock Spinning Rotation", "Фиксировать поворот при вращении");
+        SETTING_TRANSLATIONS.put("Do not rotate the doll with your view while riptide spinning", "Не поворачивать куклу за взглядом во время вращения с Тягуном");
+        SETTING_TRANSLATIONS.put("Visibility", "Видимость");
+        SETTING_TRANSLATIONS.put("Auto Hide", "Автоскрытие");
+        SETTING_TRANSLATIONS.put("Only show the doll while you are doing something", "Показывать куклу только когда вы что-то делаете");
+        SETTING_TRANSLATIONS.put("Hide In F5", "Скрывать в F5");
+        SETTING_TRANSLATIONS.put("Hide the doll in third person", "Скрывать куклу от третьего лица");
+        SETTING_TRANSLATIONS.put("Hide During F3", "Скрывать при F3");
+        SETTING_TRANSLATIONS.put("Hide the doll while the debug screen is open", "Скрывать куклу, пока открыт экран отладки");
+        SETTING_TRANSLATIONS.put("Hide During Screens", "Скрывать в меню");
+        SETTING_TRANSLATIONS.put("Hide the doll while any screen (inventory, menus) is open", "Скрывать куклу, пока открыт любой экран (инвентарь, меню)");
+        SETTING_TRANSLATIONS.put("Shows a small live preview of your player in a corner of the screen", "Показывает маленькую живую копию вашего игрока в углу экрана");
+        // Saturation.mode
         SETTING_TRANSLATIONS.put("Yellow Bar", "Жёлтая полоса");
         SETTING_TRANSLATIONS.put("Second Hunger Bar", "Вторая полоса голода");
-
+        // TrapTimer.mode
         SETTING_TRANSLATIONS.put("Normal", "Обычный");
         SETTING_TRANSLATIONS.put("Dragon", "Дракон");
-
+        // WeatherChanger.weatherType
         SETTING_TRANSLATIONS.put("Clear", "Ясно");
         SETTING_TRANSLATIONS.put("Rain", "Дождь");
         SETTING_TRANSLATIONS.put("Thunder", "Гроза");
-
+        // NoFluid.mode (Water/Lava already share lexicon needs)
         SETTING_TRANSLATIONS.put("Water", "Вода");
         SETTING_TRANSLATIONS.put("Lava", "Лава");
-
+        // MouseClicker.hand
         SETTING_TRANSLATIONS.put("Right", "Правая");
-
+        // Translator.provider
         SETTING_TRANSLATIONS.put("Google", "Google");
         SETTING_TRANSLATIONS.put("Apify", "Apify");
-
+        // Predictions / FTHelper neutral preset
         SETTING_TRANSLATIONS.put("Black", "Чёрный");
         SETTING_TRANSLATIONS.put("Quickly selects matching hotbar items on hotkey press", "Быстрый выбор предметов по нажатию клавиш");
         SETTING_TRANSLATIONS.put("Select the first matching item in your hotbar", "Выбирает первый подходящий предмет в хотбаре");
-
+        // Consumable.itemTypes (vanilla item names; localised for the
+        // Russian audience - storage stays English so each entry maps
+        // back to the canonical ItemRegistry id without ambiguity).
         SETTING_TRANSLATIONS.put("Snowball", "Снежок");
         SETTING_TRANSLATIONS.put("Egg", "Яйцо");
         SETTING_TRANSLATIONS.put("Wind Charge", "Заряд ветра");
@@ -663,7 +1090,10 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("Ender Pearl", "Жемчуг эндера");
         SETTING_TRANSLATIONS.put("Firework Rocket", "Фейерверк");
         SETTING_TRANSLATIONS.put("Experience Bottle", "Бутылочка опыта");
-
+        // BetterF3.sections multiselect (sub-set of the F3 overlay).
+        // {@code Coordinates}, {@code Biome}, {@code Light},
+        // {@code Dimension}, {@code Server}, {@code Memory},
+        // {@code Time}, {@code System} are the F3 overlay categories.
         SETTING_TRANSLATIONS.put("Coordinates", "Координаты");
         SETTING_TRANSLATIONS.put("Facing", "Направление");
         SETTING_TRANSLATIONS.put("Biome", "Биом");
@@ -716,7 +1146,6 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("Mobs", "Мобы");
         SETTING_TRANSLATIONS.put("Mode", "Режим");
         SETTING_TRANSLATIONS.put("Mode Type", "Тип режима");
-        SETTING_TRANSLATIONS.put("Model Size", "Размер модели");
         SETTING_TRANSLATIONS.put("Modern", "Современный");
         SETTING_TRANSLATIONS.put("Modify vanilla scoreboard with blur, custom colors, position, and scale", "Меняет ваниль scoreboard: блюр, цвета, позиция и масштаб");
         SETTING_TRANSLATIONS.put("MOTD", "MOTD");
@@ -811,12 +1240,12 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("Recolor the vanilla block outline at your crosshair, optionally fill the faces", "Перекрашивает ванильный контур блока под прицелом, опционально заливает грани");
         SETTING_TRANSLATIONS.put("Records your coords on death so you can return for your dropped items", "Запоминает координаты смерти, чтобы вернуться за выпавшим");
         SETTING_TRANSLATIONS.put("Refresh Rate", "Частота обновления");
+        SETTING_TRANSLATIONS.put("Blur Background FPS", "FPS фона с блюром");
         SETTING_TRANSLATIONS.put("Refresh Rate Scaling", "Масштаб частоты обновления");
         SETTING_TRANSLATIONS.put("Removes the fog and screen overlay applied while the camera is submerged in water or lava", "Убирает туман и оверлей при погружении камеры в воду или лаву");
         SETTING_TRANSLATIONS.put("Removes the right-click delay when throwing experience bottles", "Убирает задержку ПКМ при бросании бутылок опыта");
         SETTING_TRANSLATIONS.put("Render Mode", "Режим рендера");
         SETTING_TRANSLATIONS.put("Render-pipeline tweaks: hide glowing outlines, fire overlay, particles", "Твики рендера: скрыть свечение, оверлей огня, частицы");
-        SETTING_TRANSLATIONS.put("Renders a 3D mini-version of your skin in the corner", "Рендерит 3D-мини-версию вашего скина в углу");
         SETTING_TRANSLATIONS.put("Renders your 27 storage slots or last-seen ender chest on the HUD", "Рендерит 27 слотов инвентаря или последний эндер-сундук на HUD");
         SETTING_TRANSLATIONS.put("English", "Английский");
         SETTING_TRANSLATIONS.put("Russian", "Русский");
@@ -1058,7 +1487,7 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("Vanilla", "Ванилла");
         SETTING_TRANSLATIONS.put("Vertical Layout", "Вертикальный макет");
         SETTING_TRANSLATIONS.put("Vibrance", "Сочность");
-        SETTING_TRANSLATIONS.put("Visible", "Видимый");
+        SETTING_TRANSLATIONS.put("Visible", "Видимость");
         SETTING_TRANSLATIONS.put("Visual", "Визуальное");
         SETTING_TRANSLATIONS.put("Volume", "Громкость");
         SETTING_TRANSLATIONS.put("Warns when the held pickaxe is low on durability and can auto-swap to a safe hotbar slot", "Предупреждает при низкой прочности кирки в руке и может авто-сменить на безопасный слот");
@@ -1155,16 +1584,15 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("Selected items are highlighted immediately", "Выбранные предметы подсвечиваются сразу");
         SETTING_TRANSLATIONS.put("Totem of Undying", "Тотем бессмертия");
         SETTING_TRANSLATIONS.put("Trap", "Трапка");
-        SETTING_TRANSLATIONS.put("Trapka", "Трапка");
-        SETTING_TRANSLATIONS.put("Jake's Lamp", "Лампа Джейка");
-        SETTING_TRANSLATIONS.put("Jake's Lamp Name", "Имя «Лампа Джейка»");
-        SETTING_TRANSLATIONS.put("Explosive Trap", "Взрывная трапка");
         SETTING_TRANSLATIONS.put("Translation Options", "Параметры перевода");
         SETTING_TRANSLATIONS.put("Hud Text Color", "Цвет текста HUD");
+        SETTING_TRANSLATIONS.put("Corner Rounding", "Закругление краёв");
         SETTING_TRANSLATIONS.put("Default color for HUD text that does not use its own dynamic tint", "Цвет текста HUD по умолчанию для элементов без собственной динамической окраски");
         SETTING_TRANSLATIONS.put("Render Other Player Cosmetics", "Показывать косметику других игроков");
         SETTING_TRANSLATIONS.put("Render Phaze cosmetics equipped by other players", "Показывать косметику Phaze, надетую другими игроками");
 
+        // Main-menu / configs UI strings that are not module or
+        // category names and should therefore localize to Russian.
         SETTING_TRANSLATIONS.put("Active", "Активная");
         SETTING_TRANSLATIONS.put("Applies to Main Menu, Mod Menu, Sodium and other screens", "Применяется к главному меню, Mod Menu, Sodium и другим экранам");
         SETTING_TRANSLATIONS.put("Castle", "Замок");
@@ -1191,6 +1619,16 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("Themes", "Темы");
         SETTING_TRANSLATIONS.put("just now", "только что");
         SETTING_TRANSLATIONS.put("General", "Общие");
+        SETTING_TRANSLATIONS.put("Render Health", "Показывать здоровье");
+        SETTING_TRANSLATIONS.put("Render Text", "Показывать текст");
+        SETTING_TRANSLATIONS.put("Fill Color", "Цвет заполнения");
+        SETTING_TRANSLATIONS.put("Rainbow Speed", "Скорость радуги");
+        SETTING_TRANSLATIONS.put("Show the boss health bar", "Показывать полосу здоровья босса");
+        SETTING_TRANSLATIONS.put("Show the boss bar name", "Показывать название боссбара");
+        SETTING_TRANSLATIONS.put("Boss bar color mode", "Режим цвета боссбара");
+        SETTING_TRANSLATIONS.put("Boss bar fill color", "Цвет заполнения боссбара");
+        SETTING_TRANSLATIONS.put("Speed of the boss bar rainbow cycle", "Скорость полного радужного цикла боссбара");
+        SETTING_TRANSLATIONS.put("Customizable boss bar", "Настраиваемый боссбар");
         SETTING_TRANSLATIONS.put("Advanced", "Расширенное");
         SETTING_TRANSLATIONS.put("Blocks", "Блоки");
         SETTING_TRANSLATIONS.put("Fluids", "Жидкости");
@@ -1217,6 +1655,111 @@ public final class Lang {
         SETTING_TRANSLATIONS.put("Alpha multiplier", "Множитель прозрачности");
         SETTING_TRANSLATIONS.put("Brightness offset", "Смещение яркости");
         SETTING_TRANSLATIONS.put("Saturation multiplier", "Множитель насыщенности");
+
+        // Settings and descriptions only: module titles bypass this dictionary.
+        // Identifiers, selected values and config keys stay canonical English.
+        SETTING_TRANSLATIONS.put("Pack Organizer", "Органайзер ресурспаков");
+        SETTING_TRANSLATIONS.put("Pack Previews", "Превью ресурспаков");
+        SETTING_TRANSLATIONS.put("Show real pack textures and resource details when hovering a pack", "Показывать реальные текстуры и данные пака при наведении");
+        SETTING_TRANSLATIONS.put("Search Bar", "Поиск по пакам");
+        SETTING_TRANSLATIONS.put("Show quick search bar on resource pack screen", "Показывать быстрый поиск на экране ресурспаков");
+        SETTING_TRANSLATIONS.put("Adds a quick search bar and a real texture preview to the resource pack screen", "Добавляет быстрый поиск и настоящее превью текстур на экран ресурспаков");
+        SETTING_TRANSLATIONS.put("Low HP Warning", "Предупреждение о низком HP");
+        SETTING_TRANSLATIONS.put("Threshold (HP)", "Порог (HP)");
+        SETTING_TRANSLATIONS.put("HP threshold to activate warning (6.0 = 3 hearts)", "Порог HP для предупреждения (6.0 = 3 сердца)");
+        SETTING_TRANSLATIONS.put("Warning vignette tint color", "Цвет виньетки предупреждения");
+        SETTING_TRANSLATIONS.put("Warning vignette tint and intensity (alpha)", "Цвет и интенсивность виньетки предупреждения (альфа-канал)");
+        SETTING_TRANSLATIONS.put("Pulsing animation speed", "Скорость пульсации");
+        SETTING_TRANSLATIONS.put("Maximum opacity of the vignette", "Максимальная прозрачность виньетки");
+        SETTING_TRANSLATIONS.put("Play immersive heartbeat sound while in critical state", "Проигрывать сердцебиение в критическом состоянии");
+        SETTING_TRANSLATIONS.put("Heartbeat sound volume", "Громкость сердцебиения");
+        SETTING_TRANSLATIONS.put("Smooth cinematic screen vignette and pulsing heartbeat when health is low", "Плавная виньетка и пульсирующее сердцебиение при низком здоровье");
+        SETTING_TRANSLATIONS.put("Search", "Поиск");
+        SETTING_TRANSLATIONS.put("Search packs...", "Поиск ресурспаков...");
+
+        SETTING_TRANSLATIONS.put("Turquoise", "Бирюзовый");
+        SETTING_TRANSLATIONS.put("Golden", "Золотой");
+        SETTING_TRANSLATIONS.put("Ruby", "Рубиновый");
+        SETTING_TRANSLATIONS.put("Glint color mode", "Режим цвета зачарования");
+        SETTING_TRANSLATIONS.put("Custom glint color", "Свой цвет зачарования");
+        SETTING_TRANSLATIONS.put("Glint movement and color animation speed", "Скорость перелива и движения блеска зачарования");
+        SETTING_TRANSLATIONS.put("Custom color and animation speed for enchanted item and armor glint", "Настройка цвета и скорости блеска зачарованных предметов и брони");
+        SETTING_TRANSLATIONS.put("Pulse Speed", "Скорость пульсации");
+        SETTING_TRANSLATIONS.put("Heartbeat Sound", "Звук сердцебиения");
+
+        SETTING_TRANSLATIONS.put("Voxels settings", "Настройки вокселей");
+        SETTING_TRANSLATIONS.put("Voxel Depth", "Глубина вокселей");
+        SETTING_TRANSLATIONS.put("Depth of extruded outer skin voxels", "Глубина объёмных вокселей внешнего слоя скина");
+        SETTING_TRANSLATIONS.put("Max Distance", "Максимальная дальность");
+        SETTING_TRANSLATIONS.put("Saved Waypoints", "Сохранённые точки");
+        SETTING_TRANSLATIONS.put("Waypoints saved for the current server or world", "Точки, сохранённые для текущего сервера или мира");
+        SETTING_TRANSLATIONS.put("Chat Waypoints", "Точки из чатов");
+        SETTING_TRANSLATIONS.put("Show points shared in your groups and chats, even with the module off",
+                "Показывать точки из групп и чатов, даже когда модуль выключен");
+        SETTING_TRANSLATIONS.put("Death Waypoint", "Точка смерти");
+        SETTING_TRANSLATIONS.put("Automatically place a 3D marker upon death", "Ставит 3D-метку на месте смерти");
+        SETTING_TRANSLATIONS.put("Death Color", "Цвет точки смерти");
+        SETTING_TRANSLATIONS.put("Color of death waypoint", "Цвет метки смерти");
+        SETTING_TRANSLATIONS.put("Maximum render distance in blocks", "Максимальная дальность отрисовки в блоках");
+        SETTING_TRANSLATIONS.put("Saved 3D waypoints with a block highlight, beam and distance tag, plus death points",
+                "Сохранённые 3D-точки с подсветкой блока, лучом и расстоянием, а также точки смерти");
+        SETTING_TRANSLATIONS.put("Maximum distance to render 3D voxels (blocks)", "Максимальная дальность отображения 3D-вокселей (в блоках)");
+        SETTING_TRANSLATIONS.put("Show Others", "Показывать других");
+        SETTING_TRANSLATIONS.put("Apply 3D skin layer to other players", "Показывать объёмный слой скина у других игроков");
+        SETTING_TRANSLATIONS.put("3D Hat", "3D-шапка");
+        SETTING_TRANSLATIONS.put("Extrude hat and hair layer", "Делать слой шапки и волос объёмным");
+        SETTING_TRANSLATIONS.put("3D Jacket", "3D-куртка");
+        SETTING_TRANSLATIONS.put("Extrude jacket and torso layer", "Делать слой куртки и туловища объёмным");
+        SETTING_TRANSLATIONS.put("3D Sleeves", "3D-рукава");
+        SETTING_TRANSLATIONS.put("Extrude sleeve layers", "Делать слои рукавов объёмными");
+        SETTING_TRANSLATIONS.put("3D Pants", "3D-штаны");
+        SETTING_TRANSLATIONS.put("Extrude pants layers", "Делать слои штанов объёмными");
+        SETTING_TRANSLATIONS.put("Makes the outer skin layer 3D", "Делает внешний слой скина объёмным");
+        SETTING_TRANSLATIONS.put("Capes wave and flutter smoothly as you move", "Плащи плавно развеваются при движении");
+
+        SETTING_TRANSLATIONS.put("Kill sound effect", "Звуковой эффект при убийстве");
+        SETTING_TRANSLATIONS.put("Sound volume", "Громкость звука");
+        SETTING_TRANSLATIONS.put("Sound pitch", "Высота звука");
+        SETTING_TRANSLATIONS.put("Players Only", "Только игроки");
+        SETTING_TRANSLATIONS.put("Only play when eliminating players", "Воспроизводить звук только при убийстве игроков");
+        SETTING_TRANSLATIONS.put("Plays crisp open-source and retro sound effects on eliminating opponents", "Проигрывает чёткие звуковые эффекты с открытым исходным кодом и ретро-звуки при убийстве противников");
+        SETTING_TRANSLATIONS.put("Laser", "Лазер");
+        SETTING_TRANSLATIONS.put("Ding", "Динь");
+        SETTING_TRANSLATIONS.put("Destroy", "Разрушение");
+        SETTING_TRANSLATIONS.put("Hit", "Удар");
+        SETTING_TRANSLATIONS.put("Pop", "Хлопок");
+        SETTING_TRANSLATIONS.put("Crunch", "Хруст");
+        SETTING_TRANSLATIONS.put("Pling", "Звон");
+        SETTING_TRANSLATIONS.put("Bell", "Колокол");
+        SETTING_TRANSLATIONS.put("Orb XP", "Сфера опыта");
+        SETTING_TRANSLATIONS.put("Level Up", "Повышение уровня");
+        SETTING_TRANSLATIONS.put("Anvil", "Наковальня");
+
+        SETTING_TRANSLATIONS.put("Auto Sprint", "Авто-спринт");
+        SETTING_TRANSLATIONS.put("Auto Eat", "Авто-еда");
+        SETTING_TRANSLATIONS.put("Auto Respawn", "Авто-возрождение");
+        SETTING_TRANSLATIONS.put("Auto Swap", "Авто-смена");
+        SETTING_TRANSLATIONS.put("Better F3", "Улучшенный F3");
+        SETTING_TRANSLATIONS.put("Block Overlay", "Обводка блока");
+        SETTING_TRANSLATIONS.put("Full Bright", "Полная яркость");
+        SETTING_TRANSLATIONS.put("World Animator", "Анимация мира");
+        SETTING_TRANSLATIONS.put("Chat Helper", "Помощник чата");
+        SETTING_TRANSLATIONS.put("Color Correction", "Цветокоррекция");
+        SETTING_TRANSLATIONS.put("Custom Fog", "Своя дальность прорисовки");
+        SETTING_TRANSLATIONS.put("Death Coords", "Координаты смерти");
+        SETTING_TRANSLATIONS.put("Health Indicator", "Индикатор здоровья");
+        SETTING_TRANSLATIONS.put("Item Physics", "Физика предметов");
+        SETTING_TRANSLATIONS.put("Motion Blur", "Размытие движения");
+        SETTING_TRANSLATIONS.put("Old Animations", "Старые анимации");
+        SETTING_TRANSLATIONS.put("Render Tweaks", "Твики рендера");
+        SETTING_TRANSLATIONS.put("Shulker Preview", "Превью шалкера");
+        SETTING_TRANSLATIONS.put("Sky Customizer", "Настройка неба");
+        SETTING_TRANSLATIONS.put("Smooth Camera", "Плавная камера");
+        SETTING_TRANSLATIONS.put("Streamer Mode", "Режим стримера");
+        SETTING_TRANSLATIONS.put("Time Changer", "Смена времени");
+        SETTING_TRANSLATIONS.put("Waypoints", "Точки маршрута");
+        SETTING_TRANSLATIONS.put("Weather Changer", "Смена погоды");
+        SETTING_TRANSLATIONS.put("Zoom", "Зум");
     }
 
     private static void en(String key, String value) { EN_TABLE.put(key, value); }

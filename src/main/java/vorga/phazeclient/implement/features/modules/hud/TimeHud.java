@@ -24,11 +24,11 @@ public final class TimeHud extends RectHudModule {
     public final SectionSetting phaseSection = new SectionSetting("Day Phase");
     public final BooleanSetting showPhase = new BooleanSetting(
             "Show Day Phase",
-            "Append the real-time day phase (Morning / Day / Evening / Night)"
+            "Append the in-game day phase (Morning / Day / Dusk / Night)"
     ).setValue(false);
     public final BooleanSetting colorPhase = new BooleanSetting(
             "Color Phase",
-            "Tint the day-phase label by phase (Morning yellow, Day white, Evening orange, Night blue)"
+            "Tint the day-phase label by phase (Morning yellow, Day white, Dusk orange, Night blue)"
     ).setValue(true)
             .visible(() -> showPhase.isValue());
 
@@ -44,7 +44,7 @@ public final class TimeHud extends RectHudModule {
         showPhase.setFullWidth(true);
         colorPhase.setFullWidth(true);
         setup(timeSection, hour24, showAmPm, showSeconds,
-                phaseSection, showPhase, colorPhase, otherSection, cornerRounding);
+                phaseSection, showPhase, colorPhase);
     }
 
     @Override
@@ -67,7 +67,7 @@ public final class TimeHud extends RectHudModule {
         long t = ((timeOfDay % 24000L) + 24000L) % 24000L;
         if (t < 6000L) return Phase.MORNING;
         if (t < 12000L) return Phase.DAY;
-        if (t < 13800L) return Phase.EVENING;
+        if (t < 13800L) return Phase.DUSK;
         return Phase.NIGHT;
     }
 
@@ -83,6 +83,7 @@ public final class TimeHud extends RectHudModule {
         MORNING("Morning", "§e"),
         DAY("Day", "§f"),
         EVENING("Evening", "§6"),
+        DUSK("Dusk", "§6"),
         NIGHT("Night", "§9");
 
         public final String label;

@@ -1,18 +1,18 @@
 #version 330
 
-// MSDF text.
-//
-// The 1.21.4 version carried twelve uniforms. Phaze only ever drove three
-// of them with real values (Range, Thickness, Smoothness); the rest were
-// nailed to constants at every call site - Outline off, fade-out off,
-// ColorModulator white. 1.21.11 has no loose uniforms at all, so the
-// three live values became a vertex attribute and the constant branches
-// are folded away here rather than being carried as dead uniforms.
-//
-// The distance-field maths is unchanged.
+// Per-glyph MSDF parameters are vertex attributes; optional run effects use std140.
 in vec2 TexCoord;
 in vec4 FragColor;
 in vec4 vMsdfParams;
+in vec2 GlobalPos;
+
+layout(std140) uniform MsdfEffects {
+    vec4 OutlineColor;
+    vec4 EffectFlags; // outline enabled, outline thickness, fadeout enabled, text x
+    vec4 Fadeout; // start, end, max width, label fade enabled
+    vec4 LabelFadeBounds; // left, right, ramp width, unused
+    vec4 LabelFadeStrength;
+};
 
 uniform sampler2D Sampler0;
 
@@ -28,9 +28,25 @@ void main() {
     float smoothness = vMsdfParams.z;
 
     float dist = median(texture(Sampler0, TexCoord).rgb) - 0.5 + thickness;
-    vec2 h = vec2(dFdx(TexCoord.x), dFdy(TexCoord.y)) * textureSize(Sampler0, 0);
-    float pixels = range * inversesqrt(h.x * h.x + h.y * h.y);
+    vec2 unitRange = vec2(range) / vec2(textureSize(Sampler0, 0));
+    vec2 screenTexSize = vec2(1.0) / max(fwidth(TexCoord), vec2(1.0e-6));
+    float pixels = max(0.5 * dot(unitRange, screenTexSize), 1.0);
     float alpha = smoothstep(-smoothness, smoothness, dist * pixels);
 
-    OutColor = vec4(FragColor.rgb, FragColor.a * alpha);
+    vec4 color = vec4(FragColor.rgb, FragColor.a * alpha);
+    if (EffectFlags.x > 0.5) {
+        color = mix(OutlineColor, FragColor, alpha);
+        color.a *= smoothstep(-smoothness, smoothness, (dist + EffectFlags.y) * pixels);
+    }
+    if (EffectFlags.z > 0.5 && Fadeout.z > 0.0) {
+        float normalizedX = (GlobalPos.x - EffectFlags.w) / Fadeout.z;
+        color.a *= 1.0 - smoothstep(Fadeout.x, max(Fadeout.y, Fadeout.x + 1.0e-6), normalizedX);
+    }
+    if (Fadeout.w > 0.5) {
+        float width = max(LabelFadeBounds.z, 1.0e-6);
+        float leftRamp = smoothstep(0.0, width, GlobalPos.x - LabelFadeBounds.x);
+        float rightRamp = smoothstep(0.0, width, LabelFadeBounds.y - GlobalPos.x);
+        color.a *= mix(1.0, leftRamp, LabelFadeStrength.x) * mix(1.0, rightRamp, LabelFadeStrength.y);
+    }
+    OutColor = color;
 }

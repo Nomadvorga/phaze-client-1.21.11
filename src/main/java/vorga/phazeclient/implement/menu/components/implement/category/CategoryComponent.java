@@ -23,6 +23,7 @@ import vorga.phazeclient.base.util.math.MathUtil;
 import vorga.phazeclient.base.util.render.ScissorManager;
 import vorga.phazeclient.core.Main;
 import vorga.phazeclient.implement.menu.MenuScreen;
+import vorga.phazeclient.implement.menu.MenuLayout;
 import vorga.phazeclient.implement.menu.MenuStyle;
 import vorga.phazeclient.implement.menu.components.AbstractComponent;
 import vorga.phazeclient.implement.menu.components.implement.module.ModuleComponent;
@@ -34,9 +35,9 @@ import java.util.*;
 public class CategoryComponent extends AbstractComponent {
     private static final float CHIP_TEXT_SIZE = 6.25F;
     private static final int COLUMN_COUNT = 3;
-    private static final int COLUMN_GAP = 6;
-    private static final int ROW_GAP = 8;
-    private static final float SIDEBAR_WIDTH = 100f;
+    private static final int COLUMN_GAP = (int) MenuLayout.GRID_COLUMN_GAP;
+    private static final int ROW_GAP = (int) MenuLayout.GRID_ROW_GAP;
+    private static final float SIDEBAR_WIDTH = MenuLayout.SIDEBAR_WIDTH;
     private static final float GRID_TOP = 55f;
     private static final float GRID_BOTTOM_PADDING = 6f;
 
@@ -57,6 +58,11 @@ public class CategoryComponent extends AbstractComponent {
     private String lastSearchText = "";
     private boolean visibleCacheDirty = true;
     private boolean isInitialized = false;
+    private static final long VISIBLE_REFRESH_INTERVAL_NS = 200_000_000L;
+    private long lastVisibleRefreshNs;
+    private String lastLanguage = "";
+    private final List<ModuleComponent> scratchVisible = new ArrayList<>();
+    private final int[] renderOffsets = new int[COLUMN_COUNT];
 
     private int mouseX = 0;
     private int mouseY = 0;
@@ -67,13 +73,7 @@ public class CategoryComponent extends AbstractComponent {
     }
 
     public String getTabLabel() {
-        return switch (category) {
-            case ALL -> "ALL";
-            case UTILITIES -> "UTILITIES";
-            case HUD -> "HUD";
-            case OTHER -> "OTHER";
-            default -> category.name();
-        };
+        return category.getReadableName();
     }
 
     private void initialize() {
@@ -100,10 +100,17 @@ public class CategoryComponent extends AbstractComponent {
             return;
         }
 
-        String currentSearchText = menuScreen.getSearchComponent().getText().toLowerCase();
-        refreshVisibleCache(currentCategory, currentSearchText);
+        String currentSearchText = menuScreen.getSearchComponent().getText().toLowerCase(Locale.ROOT);
+        String language = vorga.phazeclient.base.util.Lang.getActive();
+        long now = System.nanoTime();
+        if (!isInitialized || currentCategory != lastCategory || !currentSearchText.equals(lastSearchText)
+                || !Objects.equals(language, lastLanguage) || now - lastVisibleRefreshNs >= VISIBLE_REFRESH_INTERVAL_NS) {
+            refreshVisibleCache(currentCategory, currentSearchText);
+            lastVisibleRefreshNs = now;
+            lastLanguage = language;
+        }
 
-        if (!isInitialized && currentCategory == category) {
+        if (!isInitialized) {
             isInitialized = true;
             lastCategory = currentCategory;
             lastSearchText = currentSearchText;
@@ -115,9 +122,9 @@ public class CategoryComponent extends AbstractComponent {
         }
         visibleCacheDirty = false;
 
-        float gridX = menuScreen.x + SIDEBAR_WIDTH + 6f;
+        float gridX = menuScreen.x + SIDEBAR_WIDTH + MenuLayout.CONTENT_INSET;
         float gridY = menuScreen.y + GRID_TOP;
-        float gridWidth = menuScreen.width - SIDEBAR_WIDTH - 12f;
+        float gridWidth = menuScreen.width - SIDEBAR_WIDTH - MenuLayout.CONTENT_INSET * 2.0F;
         float gridHeight = menuScreen.height - GRID_TOP - GRID_BOTTOM_PADDING;
         float columnWidth = (gridWidth - COLUMN_GAP * (COLUMN_COUNT - 1)) / COLUMN_COUNT;
 
@@ -125,7 +132,7 @@ public class CategoryComponent extends AbstractComponent {
         ScissorManager scissorManager = Main.getInstance().getScissorManager();
         scissorManager.push(positionMatrix, gridX, gridY, gridWidth, gridHeight);
 
-        int[] offsets = new int[COLUMN_COUNT];
+        int[] offsets = renderOffsets;
         System.arraycopy(cachedColumnHeights, 0, offsets, 0, COLUMN_COUNT);
         float gridBottom = gridY + gridHeight;
         for (int i = visibleComponents.size() - 1; i >= 0; i--) {
@@ -173,9 +180,9 @@ public class CategoryComponent extends AbstractComponent {
             return false;
         }
 
-        float gridX = menuScreen.x + SIDEBAR_WIDTH + 6f;
+        float gridX = menuScreen.x + SIDEBAR_WIDTH + MenuLayout.CONTENT_INSET;
         float gridY = menuScreen.y + GRID_TOP;
-        float gridWidth = menuScreen.width - SIDEBAR_WIDTH - 12f;
+        float gridWidth = menuScreen.width - SIDEBAR_WIDTH - MenuLayout.CONTENT_INSET * 2.0F;
         float gridHeight = menuScreen.height - GRID_TOP - GRID_BOTTOM_PADDING;
         if (MathUtil.isHovered(mouseX, mouseY, gridX, gridY, gridWidth, gridHeight)) {
 
@@ -216,9 +223,9 @@ public class CategoryComponent extends AbstractComponent {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
         MenuScreen menuScreen = MenuScreen.INSTANCE;
-        float gridX = menuScreen.x + SIDEBAR_WIDTH + 6f;
+        float gridX = menuScreen.x + SIDEBAR_WIDTH + MenuLayout.CONTENT_INSET;
         float gridY = menuScreen.y + GRID_TOP;
-        float gridWidth = menuScreen.width - SIDEBAR_WIDTH - 12f;
+        float gridWidth = menuScreen.width - SIDEBAR_WIDTH - MenuLayout.CONTENT_INSET * 2.0F;
         float gridHeight = menuScreen.height - GRID_TOP - GRID_BOTTOM_PADDING;
 
         if (MathUtil.isHovered(mouseX, mouseY, gridX, gridY, gridWidth, gridHeight)) {
@@ -325,12 +332,9 @@ public class CategoryComponent extends AbstractComponent {
         return Math.max(0, maxScroll);
     }
 
-    private boolean shouldRenderComponent(ModuleComponent component) {
-        MenuScreen menuScreen = MenuScreen.INSTANCE;
+    private boolean shouldRenderComponent(ModuleComponent component, ModuleCategory currentCategory, String searchText) {
         ModuleCategory moduleCategory = component.getModule().getCategory();
         ModuleCategory secondaryCategory = component.getModule().getSecondaryCategory();
-        ModuleCategory currentCategory = menuScreen.getCategory();
-        String searchText = menuScreen.getSearchComponent().getText().toLowerCase();
 
         if (!component.getModule().isVisible()) {
             return false;
@@ -341,7 +345,7 @@ public class CategoryComponent extends AbstractComponent {
                 return false;
             }
 
-            String moduleName = component.getModule().getLocalizedName().toLowerCase();
+            String moduleName = component.getModule().getLocalizedName().toLowerCase(Locale.ROOT);
             if (moduleName.contains(searchText)) {
                 return true;
             }
@@ -360,9 +364,10 @@ public class CategoryComponent extends AbstractComponent {
     }
 
     private void refreshVisibleCache(ModuleCategory currentCategory, String currentSearchText) {
-        List<ModuleComponent> nextVisible = new ArrayList<>();
+        List<ModuleComponent> nextVisible = scratchVisible;
+        nextVisible.clear();
         for (ModuleComponent moduleComponent : moduleComponents) {
-            if (shouldRenderComponent(moduleComponent)) {
+            if (shouldRenderComponent(moduleComponent, currentCategory, currentSearchText)) {
                 nextVisible.add(moduleComponent);
             }
         }
@@ -378,20 +383,20 @@ public class CategoryComponent extends AbstractComponent {
     }
 
     private boolean searchInSetting(Setting setting, String searchText) {
-        if (setting.getLocalizedName().toLowerCase().contains(searchText)) {
+        if (setting.getLocalizedName().toLowerCase(Locale.ROOT).contains(searchText)) {
             return true;
         }
 
-        if (setting.getLocalizedDescription() != null && setting.getLocalizedDescription().toLowerCase().contains(searchText)) {
+        if (setting.getLocalizedDescription() != null && setting.getLocalizedDescription().toLowerCase(Locale.ROOT).contains(searchText)) {
             return true;
         }
 
         if (setting instanceof SelectSetting selectSetting && selectSetting.getList() != null) {
-            return selectSetting.getList().stream().anyMatch(option -> option.toLowerCase().contains(searchText));
+            return selectSetting.getList().stream().anyMatch(option -> option.toLowerCase(Locale.ROOT).contains(searchText));
         }
 
         if (setting instanceof MultiSelectSetting multiSelectSetting && multiSelectSetting.getList() != null) {
-            return multiSelectSetting.getList().stream().anyMatch(option -> option.toLowerCase().contains(searchText));
+            return multiSelectSetting.getList().stream().anyMatch(option -> option.toLowerCase(Locale.ROOT).contains(searchText));
         }
 
         if (setting instanceof GroupSetting groupSetting) {

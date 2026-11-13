@@ -18,6 +18,7 @@ import vorga.phazeclient.base.util.other.StringUtil;
 import vorga.phazeclient.implement.menu.MenuStyle;
 import vorga.phazeclient.implement.menu.components.implement.settings.AbstractSettingComponent;
 import vorga.phazeclient.implement.menu.components.implement.settings.ResetIconComponent;
+import vorga.phazeclient.implement.menu.components.implement.settings.SettingLabelState;
 import net.minecraft.client.gui.DrawContext;
 import org.joml.Matrix3x2fc;
 import org.joml.Matrix4f;
@@ -27,7 +28,7 @@ import java.util.List;
 public class SelectComponent extends AbstractSettingComponent {
     private static final float LABEL_TEXT_SIZE = 7.0F;
     private static final float VALUE_TEXT_SIZE = 6.1F;
-    private static final float CARD_MIN_HEIGHT = 26.0F;
+    private static final float CARD_MIN_HEIGHT = ROW_HEIGHT;
     private static final float SELECT_BOX_HEIGHT = 16.0F;
     private static final float SELECT_BOX_MIN_WIDTH = 92.0F;
     private static final float SELECT_BOX_MAX_WIDTH = 118.0F;
@@ -37,7 +38,7 @@ public class SelectComponent extends AbstractSettingComponent {
     private static final float SLIDE_OFFSET = 6.0F;
     private static final int TRANSITION_MS = 150;
     private static final int HOVER_MS = 120;
-    private static final int ICON_ANIMATION_MS = 120;
+    private static final int ICON_ANIMATION_MS = SettingLabelState.WIDTH_TRANSITION_MS;
 
     private final SelectSetting setting;
 
@@ -79,15 +80,13 @@ public class SelectComponent extends AbstractSettingComponent {
 
         float textOffsetProgress = textOffsetAnimation.getOutputFloat();
         float animatedTextOffset = ResetIconComponent.getTextOffset() * textOffsetProgress;
+        label.setAnimatedTextInset(animatedTextOffset);
         float resetIconAlpha = resetIconAnimation.getOutputFloat();
 
         Matrix3x2fStack matrices = context.getMatrices();
 
         float selectedBoxX = selectedBoxX();
-        float selectedBoxWidth = selectedBoxWidth();
-        String wrapped = StringUtil.wrap(setting.getLocalizedName(), (int) Math.max(28.0F, selectedBoxX - x - 14.0F - animatedTextOffset), 14);
-        float wrappedHeight = Fonts.getSize(14).getStringHeight(wrapped);
-        height = Math.round(Math.max(CARD_MIN_HEIGHT, 22 + Math.max(0, (wrappedHeight - 14) / 2.0F)));
+        height = CARD_MIN_HEIGHT;
         float hoverProgress = animatedCardHover(MathUtil.isHovered(mouseX, mouseY, x, y, width, height));
 
         renderSettingCard(context, 0.0f, hoverProgress);
@@ -96,7 +95,9 @@ public class SelectComponent extends AbstractSettingComponent {
         resetIcon.position(x, y, height).alpha(currentAlpha * resetIconAlpha).modified(isModified).render(context);
 
         float textX = x + 10 + animatedTextOffset;
-        renderLabelText(matrices, wrapped, textX, primaryText());
+        label.renderMsdf(matrices, setting.getLocalizedName(), LABEL_TEXT_SIZE, textX,
+                y + (height - LABEL_TEXT_SIZE) / 2 + 1.1F, selectedBoxX - 8, y, height, primaryText());
+        updateLabelHover(mouseX, mouseY);
     }
 
     @Override

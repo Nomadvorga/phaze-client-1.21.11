@@ -99,11 +99,15 @@ public class ConfigShareModalComponent extends AbstractComponent {
     }
 
     public void openImport(Runnable onImported) {
+        openImport(onImported, "");
+    }
+
+    public void openImport(Runnable onImported, String code) {
         this.open = true;
         this.openAnimation.setDirection(Direction.FORWARDS);
         this.mode = Mode.IMPORT;
         this.configName = null;
-        this.inputText = "";
+        this.inputText = code == null ? "" : code;
         this.inputFocused = true;
         this.statusMessage = "";
         this.statusError = false;
@@ -405,7 +409,7 @@ public class ConfigShareModalComponent extends AbstractComponent {
             return true;
         }
 
-        boolean ctrl = (modifiers & GLFW.GLFW_MOD_CONTROL) != 0;
+        boolean ctrl = new net.minecraft.client.input.KeyInput(keyCode, scanCode, modifiers).hasCtrlOrCmd();
         boolean shift = (modifiers & GLFW.GLFW_MOD_SHIFT) != 0;
         boolean isPasteCombo = (ctrl && keyCode == GLFW.GLFW_KEY_V)
                 || (shift && keyCode == GLFW.GLFW_KEY_INSERT);

@@ -3,7 +3,6 @@ package vorga.phazeclient.implement.features.modules.other;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.RenderTickCounter;
-import net.minecraft.client.render.Tessellator;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
 import net.minecraft.client.util.math.MatrixStack;
@@ -12,6 +11,7 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
 import vorga.phazeclient.api.system.render.Render3DUtil;
+import vorga.phazeclient.api.system.render.WorldOverlayRenderer;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -21,8 +21,6 @@ import java.util.Set;
 public final class HolyWorldHelperRenderer {
     private static final float TRAP_RADIUS = 3.5F;
     private static final float TRAP_SHELL_THICKNESS = 1.0F;
-
-    private static final float OUTLINE_LINE_WIDTH = 2.0F;
     private static final boolean[][][] TRAP_SHELL = createTrapShell();
     private static final boolean[][][] UNDERGROUND_TRAP = createUndergroundTrap();
     private static final Face[] FACES = Face.values();
@@ -54,7 +52,9 @@ public final class HolyWorldHelperRenderer {
         if (type == HolyWorldHelper.HighlightType.NONE) return;
 
         var playerBlock = client.player.getBlockPos();
-
+        // Build overlay vertices around the camera, like Predictions.
+        // Converting absolute world positions to float breaks block-aligned
+        // geometry once the player is far from spawn.
         float centerX = (float) (playerBlock.getX() + 0.5 - cameraPos.x);
         float centerY = (float) (playerBlock.getY() + 1.0 - cameraPos.y);
         float centerZ = (float) (playerBlock.getZ() + 0.5 - cameraPos.z);
@@ -232,7 +232,8 @@ public final class HolyWorldHelperRenderer {
 
     private static void drawGeometry(MatrixStack matrices, Geometry geometry, float offsetX, float offsetY, float offsetZ,
                                      int color, float fillOpacity) {
-        Matrix4f matrix = matrices.peek().getPositionMatrix();
+        MatrixStack.Entry entry = matrices.peek();
+        Matrix4f matrix = entry.getPositionMatrix();
         float alpha = ((color >>> 24) & 255) / 255.0F;
         float red = ((color >>> 16) & 255) / 255.0F;
         float green = ((color >>> 8) & 255) / 255.0F;
@@ -240,20 +241,16 @@ public final class HolyWorldHelperRenderer {
         float fillAlpha = alpha * fillOpacity;
 
         if (fillAlpha > 0.0F) {
-
-            BufferBuilder fill = Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+            BufferBuilder fill = WorldOverlayRenderer.buffer(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR, 1.0F, true);
             for (FaceBox face : geometry.faces) {
                 addFace(fill, matrix, face, offsetX, offsetY, offsetZ, red, green, blue, fillAlpha);
             }
-            vorga.phazeclient.util.render.PhazeRenderLayers.getBlockFill().draw(fill.end());
         }
 
-        BufferBuilder outline = Tessellator.getInstance().begin(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH);
+        BufferBuilder outline = WorldOverlayRenderer.buffer(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH, 2.0F, true);
         for (Edge edge : geometry.edges) {
-            addLine(outline, matrix, edge, offsetX, offsetY, offsetZ, red, green, blue, alpha, OUTLINE_LINE_WIDTH);
+            addLine(outline, entry, edge, offsetX, offsetY, offsetZ, red, green, blue, alpha);
         }
-        vorga.phazeclient.util.render.PhazeRenderLayers.getThickLines(OUTLINE_LINE_WIDTH).draw(outline.end());
-
     }
 
     private static boolean isOutsideTrap(int x, int y, int z) {
@@ -313,13 +310,14 @@ public final class HolyWorldHelperRenderer {
         buffer.vertex(matrix, dx, dy, dz).color(r, g, b, a);
     }
 
-    private static void addLine(BufferBuilder buffer, Matrix4f matrix, Edge edge,
+    private static void addLine(BufferBuilder buffer, MatrixStack.Entry entry, Edge edge,
                                 float offsetX, float offsetY, float offsetZ,
-                                float r, float g, float b, float a, float lineWidth) {
+                                float r, float g, float b, float a) {
+        Matrix4f matrix = entry.getPositionMatrix();
         buffer.vertex(matrix, edge.startX + offsetX, edge.startY + offsetY, edge.startZ + offsetZ)
-                .color(r, g, b, a).normal(edge.normalX, edge.normalY, edge.normalZ).lineWidth(lineWidth);
+                .color(r, g, b, a).normal(entry, edge.normalX, edge.normalY, edge.normalZ).lineWidth(2.0F);
         buffer.vertex(matrix, edge.endX + offsetX, edge.endY + offsetY, edge.endZ + offsetZ)
-                .color(r, g, b, a).normal(edge.normalX, edge.normalY, edge.normalZ).lineWidth(lineWidth);
+                .color(r, g, b, a).normal(entry, edge.normalX, edge.normalY, edge.normalZ).lineWidth(2.0F);
     }
 
     private record Geometry(FaceBox[] faces, Edge[] edges) {

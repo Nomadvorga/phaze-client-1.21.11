@@ -8,7 +8,9 @@ import lombok.Getter;
 import vorga.phazeclient.api.feature.module.setting.Setting;
 import vorga.phazeclient.api.feature.module.setting.SettingComponentAdder;
 import vorga.phazeclient.api.feature.module.setting.implement.GroupSetting;
-import vorga.phazeclient.api.system.font.Fonts;
+import vorga.phazeclient.implement.menu.font.GuiFonts;
+
+import static vorga.phazeclient.api.system.font.Fonts.Type.INTER_BOLD;
 import vorga.phazeclient.api.system.shape.ShapeProperties;
 import vorga.phazeclient.base.util.color.ColorUtil;
 import vorga.phazeclient.base.util.math.MathUtil;
@@ -29,7 +31,7 @@ import java.util.function.Supplier;
 public class GroupWindow extends AbstractWindow {
     private final List<AbstractSettingComponent> components = new ArrayList<>();
     private final GroupSetting setting;
-    private int cachedComponentHeight = 0;
+    private float cachedComponentHeight = 0.0F;
 
     public GroupWindow(GroupSetting setting) {
         this.setting = setting;
@@ -48,7 +50,7 @@ public class GroupWindow extends AbstractWindow {
                 .getScissorManager();
 
         cachedComponentHeight = calculateComponentHeight();
-        height = MathHelper.clamp(cachedComponentHeight, 0, 200);
+        height = MathHelper.clamp(cachedComponentHeight, 0.0F, 200.0F);
 
         rectangle.render(ShapeProperties.create(matrix, x, y, width, height)
                 .round(4).thickness(2).softness(1).outlineColor(applyGlobalAlpha(ColorUtil.getOutline())).color(applyGlobalAlpha(ColorUtil.getGuiRectColor(1))).build());
@@ -56,7 +58,7 @@ public class GroupWindow extends AbstractWindow {
         MatrixStack textPose = new MatrixStack();
         textPose.multiplyPositionMatrix(GuiMatrix.mat4(matrix));
 
-        Fonts.getSize(15, Fonts.Type.INTER_BOLD).drawString(textPose, setting.getLocalizedName(), x + 9, y + 10, applyGlobalAlpha(ColorUtil.getText()));
+        GuiFonts.getSize(15, INTER_BOLD).drawString(context.getMatrices(), setting.getLocalizedName(), x + 9, y + 10, applyGlobalAlpha(ColorUtil.getText()));
 
         boolean isLimitedHeight = MathHelper.clamp(height, 0, 200) == 200;
         if (isLimitedHeight) {
@@ -70,7 +72,7 @@ public class GroupWindow extends AbstractWindow {
         }
 
         float offset = 0;
-        int totalHeight = 0;
+        float totalHeight = 0.0F;
         for (int i = components.size() - 1; i >= 0; i--) {
             AbstractSettingComponent component = components.get(i);
             Supplier<Boolean> visible = component.getSetting().getVisible();
@@ -87,7 +89,7 @@ public class GroupWindow extends AbstractWindow {
             component.render(context, mouseX, mouseY, delta);
 
             offset -= component.height;
-            totalHeight += (int) component.height;
+            totalHeight += component.height;
         }
 
         if (isLimitedHeight) {
@@ -95,7 +97,7 @@ public class GroupWindow extends AbstractWindow {
             scissorManager.pop();
         }
 
-        int maxScroll = (int) Math.max(0, totalHeight - (height - 23));
+        float maxScroll = Math.max(0.0F, totalHeight - (height - 23));
         scroll = MathHelper.clamp(scroll, -maxScroll, 0);
         smoothedScroll = MathHelper.lerp(0.1F, smoothedScroll, scroll);
     }
@@ -200,7 +202,7 @@ public class GroupWindow extends AbstractWindow {
         return super.charTyped(chr, modifiers);
     }
 
-    private int calculateComponentHeight() {
+    private float calculateComponentHeight() {
         float offsetY = 0;
         for (AbstractSettingComponent component : components) {
             Supplier<Boolean> visible = component.getSetting().getVisible();
@@ -211,10 +213,10 @@ public class GroupWindow extends AbstractWindow {
 
             offsetY += component.height;
         }
-        return (int) (offsetY + 25);
+        return offsetY + 25;
     }
 
-    public int getComponentHeight() {
+    public float getComponentHeight() {
         return cachedComponentHeight;
     }
 }

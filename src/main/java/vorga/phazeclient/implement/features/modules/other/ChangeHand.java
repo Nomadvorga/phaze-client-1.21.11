@@ -1,6 +1,6 @@
 package vorga.phazeclient.implement.features.modules.other;
-
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.Arm;
 import org.lwjgl.glfw.GLFW;
 import vorga.phazeclient.api.feature.module.Module;
@@ -9,10 +9,8 @@ import vorga.phazeclient.api.feature.module.setting.implement.BindSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.BooleanSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.SectionSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.ValueSetting;
-
 public final class ChangeHand extends Module {
     private static final ChangeHand INSTANCE = new ChangeHand();
-
     public final SectionSetting mainHandSection = new SectionSetting("Main Hand");
     public final ValueSetting mainHandX = new ValueSetting("Main X", "Horizontal offset of the main hand item")
             .range(-1.0f, 1.0f).step(0.01f).setValue(0.0f);
@@ -21,8 +19,8 @@ public final class ChangeHand extends Module {
     public final ValueSetting mainHandZ = new ValueSetting("Main Z", "Depth (forward/back) offset of the main hand item")
             .range(-2.5f, 2.5f).step(0.01f).setValue(0.0f);
     public final ValueSetting mainHandScale = new ValueSetting("Main Scale", "Size multiplier of the main hand item")
-            .range(0.1f, 2.0f).step(0.01f).setValue(1.0f);
-
+            .range(0.1f, 2.0f).step(0.01f).setValue(1.0f)
+            .snapTo(1.0f, 0.08f);
     public final SectionSetting offHandSection = new SectionSetting("Off Hand");
     public final ValueSetting offHandX = new ValueSetting("Off X", "Horizontal offset of the off hand item")
             .range(-1.0f, 1.0f).step(0.01f).setValue(0.0f);
@@ -31,8 +29,8 @@ public final class ChangeHand extends Module {
     public final ValueSetting offHandZ = new ValueSetting("Off Z", "Depth (forward/back) offset of the off hand item")
             .range(-2.5f, 2.5f).step(0.01f).setValue(0.0f);
     public final ValueSetting offHandScale = new ValueSetting("Off Scale", "Size multiplier of the off hand item")
-            .range(0.1f, 2.0f).step(0.01f).setValue(1.0f);
-
+            .range(0.1f, 2.0f).step(0.01f).setValue(1.0f)
+            .snapTo(1.0f, 0.08f);
     public final SectionSetting switchSection = new SectionSetting("Switch Side");
     public final BooleanSetting uponImpact = new BooleanSetting(
             "Upon Impact",
@@ -42,16 +40,13 @@ public final class ChangeHand extends Module {
             "Bind",
             "Key to manually flip the main arm. Only used when Upon Impact is OFF."
     );
-
     public final SectionSetting swaySection = new SectionSetting("Hand Sway");
     public final BooleanSetting noHandSway = new BooleanSetting(
             "No Hand Sway",
             "Stop the camera-following yaw/pitch sway on your held item, keeping it rotationally fixed relative to the camera"
     ).setValue(false);
-
     private ChangeHand() {
         super("changehand", "Change Hand", ModuleCategory.OTHER);
-
         mainHandX.setFullWidth(true);
         mainHandY.setFullWidth(true);
         mainHandZ.setFullWidth(true);
@@ -63,7 +58,6 @@ public final class ChangeHand extends Module {
         uponImpact.setFullWidth(true);
         keybind.setFullWidth(true);
         noHandSway.setFullWidth(true);
-
         keybind.visible(() -> !uponImpact.isValue());
         setup(
                 mainHandSection, mainHandX, mainHandY, mainHandZ, mainHandScale,
@@ -72,45 +66,52 @@ public final class ChangeHand extends Module {
                 swaySection, noHandSway
         );
     }
-
     public static ChangeHand getInstance() {
         return INSTANCE;
     }
-
     @Override
     public String getDescription() {
         return "Changes the visual properties of your hands - position, scale, and active side";
     }
-
     @Override
     public String getIcon() {
         return "hand.png";
     }
-
     @Override
     public float getIconSize() {
         return 21.0F;
     }
-
     public boolean hasMainHandTransform() {
         return mainHandX.getValue() != 0.0f
                 || mainHandY.getValue() != 0.0f
                 || mainHandZ.getValue() != 0.0f
                 || mainHandScale.getValue() != 1.0f;
     }
-
     public boolean hasOffHandTransform() {
         return offHandX.getValue() != 0.0f
                 || offHandY.getValue() != 0.0f
                 || offHandZ.getValue() != 0.0f
                 || offHandScale.getValue() != 1.0f;
     }
-
+    public void applyHandOffset(MatrixStack matrices, boolean mainHand, Arm mainArm) {
+        float x = mainHand ? mainHandX.getValue() : offHandX.getValue();
+        float y = mainHand ? mainHandY.getValue() : offHandY.getValue();
+        float z = mainHand ? mainHandZ.getValue() : offHandZ.getValue();
+        if (x != 0.0f || y != 0.0f || z != 0.0f) {
+            float xSign = mainArm == Arm.LEFT ? -1.0f : 1.0f;
+            matrices.translate(x * xSign, y, z);
+        }
+    }
+    public void applyHandScale(MatrixStack matrices, boolean mainHand) {
+        float scale = mainHand ? mainHandScale.getValue() : offHandScale.getValue();
+        if (scale != 1.0f) {
+            matrices.scale(scale, scale, scale);
+        }
+    }
     @Override
     public boolean isCanBind() {
         return false;
     }
-
     public void flipMainArm() {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || client.player == null) {
@@ -120,14 +121,12 @@ public final class ChangeHand extends Module {
         Arm flipped = (current == Arm.LEFT) ? Arm.RIGHT : Arm.LEFT;
         client.player.setMainArm(flipped);
     }
-
     public void onAttackEntity() {
         if (!isEnabled() || !uponImpact.isValue()) {
             return;
         }
         flipMainArm();
     }
-
     public void onBindStateChanged(int code, int action) {
         if (!isEnabled() || uponImpact.isValue()) {
             return;

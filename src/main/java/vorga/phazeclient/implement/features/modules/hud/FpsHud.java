@@ -10,14 +10,13 @@ public final class FpsHud extends RectHudModule {
         return INSTANCE;
     }
 
-    public final SectionSetting otherSection = new SectionSetting("Other");
 
     public final BooleanSetting reverseOrder = new BooleanSetting("Reverse Order", "Show value before label, e.g. \"60 FPS\" instead of \"FPS: 60\"").setValue(false);
 
     private FpsHud() {
         super("fps_hud", "FPS");
         reverseOrder.setFullWidth(true);
-        setup(otherSection, reverseOrder, cornerRounding);
+        setup(reverseOrder);
     }
 
     @Override

@@ -36,17 +36,20 @@ public abstract class DebugHudMixin {
 
     private static final Pattern PHAZE_FPS_PREFIX = Pattern.compile("^\\d+\\s*fps");
 
-    @Inject(method = "render", at = @At("HEAD"), cancellable = true)
-    private void phaze$replaceDebugHud(DrawContext context, CallbackInfo ci) {
+    @Inject(
+            method = "drawText(Lnet/minecraft/client/gui/DrawContext;Ljava/util/List;Z)V",
+            at = @At("HEAD"),
+            cancellable = true,
+            require = 1
+    )
+    private void phaze$replaceDebugText(DrawContext context, List<String> lines, boolean left, CallbackInfo ci) {
         BetterF3 module = BetterF3.getInstance();
-        if (module == null || !module.isEnabled()) {
+        if (module == null || !module.isEnabled() || !phaze$isF3Open()) {
             return;
         }
-
-        if (!phaze$isF3Open()) {
-            return;
+        if (left) {
+            BetterF3Renderer.render(context);
         }
-        BetterF3Renderer.render(context);
         ci.cancel();
     }
 

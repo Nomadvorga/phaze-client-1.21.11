@@ -82,6 +82,6 @@ public class ShapeProperties {
     }
 
     public static ShapeProperties.ShapePropertiesBuilder create(Matrix3x2fc matrix, double x, double y, double width, double height) {
-        return ShapeProperties.builder().matrix(new Matrix3x2f(matrix)).x((float) x).y((float) y).width((float) width).height((float) height);
+        return ShapeProperties.builder().matrix(matrix == null ? null : new Matrix3x2f(matrix)).x((float) x).y((float) y).width((float) width).height((float) height);
     }
 }

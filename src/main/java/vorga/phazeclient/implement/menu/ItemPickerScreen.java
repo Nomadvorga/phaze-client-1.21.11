@@ -13,7 +13,7 @@ import net.minecraft.text.Text;
 import vorga.phazeclient.api.feature.module.setting.implement.ItemPickerSetting;
 import vorga.phazeclient.api.system.cursor.CursorManager;
 import vorga.phazeclient.api.system.font.FontRenderer;
-import vorga.phazeclient.api.system.font.Fonts;
+import vorga.phazeclient.implement.menu.font.GuiFonts;
 import vorga.phazeclient.api.system.shape.ShapeProperties;
 import vorga.phazeclient.api.system.shape.implement.Blur;
 import vorga.phazeclient.base.QuickImports;
@@ -81,8 +81,8 @@ public final class ItemPickerScreen extends Screen implements QuickImports {
                 .color(MenuStyle.withAlpha(MenuStyle.PANEL_BG, 0.86F))
                 .build());
 
-        FontRenderer titleFont = Fonts.getSize(15, INTER_BOLD);
-        FontRenderer subtitleFont = Fonts.getSize(11);
+        FontRenderer titleFont = GuiFonts.getSize(15, INTER_BOLD);
+        FontRenderer subtitleFont = GuiFonts.getSize(11);
 
         MatrixStack textPose = fontPose(context);
 
@@ -107,7 +107,7 @@ public final class ItemPickerScreen extends Screen implements QuickImports {
         float hotbarY = storageY + STORAGE_ROWS * SLOT_SIZE + SECTION_GAP;
 
         if (inventory == null) {
-            FontRenderer emptyFont = Fonts.getSize(12, INTER_BOLD);
+            FontRenderer emptyFont = GuiFonts.getSize(12, INTER_BOLD);
             String line1 = Lang.translate("Join a world to choose an item");
             String line2 = Lang.translate("Click outside or press Esc to go back");
             emptyFont.drawString(textPose, line1, panelX + (panelWidth - emptyFont.getStringWidth(line1)) / 2.0F, panelY + panelHeight / 2.0F - 10.0F, MenuStyle.TEXT_PRIMARY);
@@ -141,14 +141,16 @@ public final class ItemPickerScreen extends Screen implements QuickImports {
             footerSubtitle = Lang.translate("Selected items are highlighted immediately");
         }
 
-        titleFont = Fonts.getSize(12, INTER_BOLD);
-        subtitleFont = Fonts.getSize(10);
+        titleFont = GuiFonts.getSize(12, INTER_BOLD);
+        subtitleFont = GuiFonts.getSize(10);
         titleFont.drawString(textPose, trimToWidth(titleFont, footerTitle, panelWidth - PANEL_PADDING * 2.0F), textX, footerY + 6.0F, MenuStyle.TEXT_PRIMARY);
         subtitleFont.drawString(textPose, trimToWidth(subtitleFont, footerSubtitle, panelWidth - PANEL_PADDING * 2.0F), textX, footerY + 16.0F, MenuStyle.TEXT_MUTED);
     }
 
     private void renderInventoryRows(DrawContext context, int mouseX, int mouseY, PlayerInventory inventory, float startX, float startY, int startIndex, int slotCount, boolean storage) {
         int rows = storage ? STORAGE_ROWS : HOTBAR_ROWS;
+        var countFont = GuiFonts.getSize(10, INTER_BOLD);
+        MatrixStack countPose = fontPose(context);
 
         for (int row = 0; row < rows; row++) {
             for (int column = 0; column < GRID_COLUMNS; column++) {
@@ -174,7 +176,12 @@ public final class ItemPickerScreen extends Screen implements QuickImports {
 
                 if (selectable) {
                     context.drawItem(stack, Math.round(slotX + 1.0F), Math.round(slotY + 1.0F));
-                    context.drawStackOverlay(MinecraftClient.getInstance().textRenderer, stack, Math.round(slotX + 1.0F), Math.round(slotY + 1.0F));
+                    context.drawStackOverlay(MinecraftClient.getInstance().textRenderer, stack, Math.round(slotX + 1.0F), Math.round(slotY + 1.0F), "");
+                    if (stack.getCount() > 1) {
+                        String count = Integer.toString(stack.getCount());
+                        countFont.drawString(countPose, count, slotX + SLOT_ICON_SIZE - countFont.getStringWidth(count),
+                                slotY + 12.0F, MenuStyle.TEXT_PRIMARY);
+                    }
                 }
 
                 if (hovered && selectable) {

@@ -2,7 +2,6 @@ package vorga.phazeclient.mixins;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.Framebuffer;
-import net.minecraft.client.gl.SimpleFramebuffer;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.TitleScreen;
 import net.minecraft.client.network.ClientPlayerEntity;
@@ -17,7 +16,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-import vorga.phazeclient.api.system.hud.BatchedHudBuffer;
 import vorga.phazeclient.api.system.hud.HudBuffer;
 import vorga.phazeclient.implement.features.modules.hud.ReachHud;
 import vorga.phazeclient.implement.features.modules.other.FakeFps;
@@ -133,14 +131,11 @@ public abstract class MinecraftClientMixin {
         }
     }
 
-    @Inject(method = "getFramebuffer", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "getFramebuffer", at = @At("HEAD"), cancellable = true, require = 1)
     private void phaze$redirectFramebufferToBatchCapture(CallbackInfoReturnable<Framebuffer> cir) {
-        if (HudBuffer.activeCaptureTarget < 0) {
-            return;
-        }
-        SimpleFramebuffer fbo = BatchedHudBuffer.INSTANCE.getActiveCaptureFramebuffer();
-        if (fbo != null) {
-            cir.setReturnValue(fbo);
+        Framebuffer capture = HudBuffer.getActiveCaptureFramebuffer();
+        if (capture != null) {
+            cir.setReturnValue(capture);
         }
     }
 

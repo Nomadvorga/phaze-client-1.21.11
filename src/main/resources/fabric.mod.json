@@ -1,7 +1,7 @@
 
 {
-  "accessWidener": "phaze.accesswidener",
   "schemaVersion": 1,
+  "accessWidener": "phaze.accesswidener",
   "id": "phaze",
   "version": "${version}",
   "name": "PhazeClient",

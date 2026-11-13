@@ -3,7 +3,6 @@
  *
  * Phaze port of the "hitrange" mod by uku3lig (uku).
  * Original source: https://github.com/uku3lig/hitrange
- *
  * Copyright (c) 2023 uku
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -15,21 +14,9 @@
  *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
- *
- * Modifications (Phaze):
- *   - Rewired HitRangeConfig fields onto Phaze's Setting framework
- *     (ValueSetting / SelectSetting / BooleanSetting / ColorSetting).
- *   - Replaced ukulib keybind / TabbedConfigScreen wiring with the
- *     Phaze Module class. Bind is inherited from Module.
- *   - Added an explicit Mode enum so the renderer stays decoupled from
- *     the localised SelectSetting strings.
- *   - Wired geometry-impacting settings to a single recompute callback
- *     instead of relying on an upstream "Compute Angles" button.
  */
 package vorga.phazeclient.implement.features.modules.other;
-
 import net.minecraft.entity.player.PlayerEntity;
 import vorga.phazeclient.api.feature.module.Module;
 import vorga.phazeclient.api.feature.module.ModuleCategory;
@@ -39,13 +26,9 @@ import vorga.phazeclient.api.feature.module.setting.implement.SectionSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.SelectSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.ValueSetting;
 import vorga.phazeclient.implement.hitrange.HitRangeCircleRenderer;
-
 public final class HitRange extends Module {
-
     public enum Mode { LINE, THICK, FILLED }
-
     private static final HitRange INSTANCE = new HitRange();
-
     public final SectionSetting appearanceSection = new SectionSetting("Appearance");
     public final ValueSetting radius = new ValueSetting(
             "Radius",
@@ -63,7 +46,6 @@ public final class HitRange extends Module {
             "Height",
             "Vertical offset above the entity's feet, in blocks. 0 sits flat on the ground."
     ).range(0.0f, 5.0f).step(0.01f).setValue(0.0f);
-
     public final SectionSetting targetingSection = new SectionSetting("Targeting");
     public final BooleanSetting nearestOnly = new BooleanSetting(
             "Nearest Only",
@@ -81,7 +63,6 @@ public final class HitRange extends Module {
             "Max Render Distance",
             "Skip drawing for entities farther than this many blocks (culling)."
     ).range(1, 200).step(1.0f).setValue(100);
-
     public final SectionSetting colorsSection = new SectionSetting("Colors");
     public final ColorSetting color = new ColorSetting(
             "Color",
@@ -105,50 +86,38 @@ public final class HitRange extends Module {
             "Random Colors",
             "Hash each player's display name into a stable random color (overrides Color / In Range Color)."
     ).setValue(false);
-
     public final SectionSetting advancedSection = new SectionSetting("Advanced");
     public final ValueSetting circleSegments = new ValueSetting(
             "Circle Segments",
             "Polygon edge count of the circle. Lower = more polygonal, higher = smoother."
     ).range(5, 180).step(1.0f).setValue(60);
-
     private PlayerEntity nearest;
-
     private HitRange() {
         super("hit_range", "Hit Range", ModuleCategory.OTHER);
-
         radius.setFullWidth(true);
         renderMode.setFullWidth(true);
-
         thickness.setFullWidth(true);
         thickness.visible(() -> "Thick".equals(renderMode.getSelected()));
         height.setFullWidth(true);
         nearestOnly.setFullWidth(true);
         showSelf.setFullWidth(true);
-
         color.setFullWidth(true);
-
         color.visible(() -> !randomColors.isValue());
         inRangeColor.setFullWidth(true);
-
         inRangeColor.visible(() -> colorWhenInRange.isValue() && !randomColors.isValue());
         outlineOpacity.setFullWidth(true);
         outlineOpacity.visible(() -> mode() == Mode.FILLED);
         randomColors.setFullWidth(true);
         colorWhenInRange.setFullWidth(true);
         colorWhenInRange.visible(() -> !randomColors.isValue());
-
         circleSegments.setFullWidth(true);
         maxSearchDistance.setFullWidth(true);
-
         maxSearchDistance.visible(nearestOnly::isValue);
         maxDistance.setFullWidth(true);
-
         radius.onChange(v -> HitRangeCircleRenderer.computeAngles());
         thickness.onChange(v -> HitRangeCircleRenderer.computeAngles());
         circleSegments.onChange(v -> HitRangeCircleRenderer.computeAngles());
         renderMode.onChange(s -> HitRangeCircleRenderer.computeAngles());
-
         setup(
                 appearanceSection, radius, renderMode, thickness, height,
                 targetingSection, nearestOnly, showSelf, maxSearchDistance, maxDistance,
@@ -156,11 +125,9 @@ public final class HitRange extends Module {
                 advancedSection, circleSegments
         );
     }
-
     public static HitRange getInstance() {
         return INSTANCE;
     }
-
     public Mode mode() {
         return switch (renderMode.getSelected()) {
             case "Line" -> Mode.LINE;
@@ -168,25 +135,20 @@ public final class HitRange extends Module {
             default -> Mode.THICK;
         };
     }
-
     public PlayerEntity getNearest() {
         return nearest;
     }
-
     public void setNearest(PlayerEntity nearest) {
         this.nearest = nearest;
     }
-
     @Override
     public String getDescription() {
         return "Draws a configurable PvP-reach circle around entities (port of uku3lig/hitrange, MIT)";
     }
-
     @Override
     public String getIcon() {
         return "hit_range.png";
     }
-
     @Override
     public float getIconSize() {
         return 21.0F;

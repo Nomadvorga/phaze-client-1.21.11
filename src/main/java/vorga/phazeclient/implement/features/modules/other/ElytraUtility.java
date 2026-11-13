@@ -1,5 +1,4 @@
 package vorga.phazeclient.implement.features.modules.other;
-
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ingame.CreativeInventoryScreen;
 import net.minecraft.client.gui.screen.ingame.InventoryScreen;
@@ -18,64 +17,50 @@ import vorga.phazeclient.api.feature.module.ModuleCategory;
 import vorga.phazeclient.api.feature.module.setting.implement.BindSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.SectionSetting;
 import vorga.phazeclient.base.util.ServerUtil;
-
 import java.lang.reflect.Method;
-
 public final class ElytraUtility extends Module {
     private static final ElytraUtility INSTANCE = new ElytraUtility();
     private static final int CHEST_SLOT_ID = 6;
     private static final long SWAP_DELAY_MS = 120L;
     private static final long DEBOUNCE_MS = 200L;
-
     public final SectionSetting generalSection = new SectionSetting("General");
     public final BindSetting keybind = new BindSetting("Keybind", "Key to swap elytra/chestplate")
             .setKey(GLFW.GLFW_KEY_R);
-
     private boolean swapping;
     private long lastActionMs;
-
     private ElytraUtility() {
-
         super("elytrautility", "Elytra Swap", ModuleCategory.UTILITIES);
         keybind.setFullWidth(true);
         setup(generalSection, keybind);
     }
-
     public static ElytraUtility getInstance() {
         return INSTANCE;
     }
-
     @Override
     public String getDescription() {
         return "Swap chestplate and elytra with a single keybind";
     }
-
     @Override
     public String getIcon() {
         return "elytrautility.png";
     }
-
     @Override
     public float getIconSize() {
         return 21.0F;
     }
-
     @Override
     public boolean isCanBind() {
         return false;
     }
-
     @Override
     public boolean isServerAllowed() {
         return ServerUtil.isElytraUtilitySupported();
     }
-
     public void onBindStateChanged(int code, int action) {
         if (!isEnabled() || action != GLFW.GLFW_PRESS) {
             return;
         }
         MinecraftClient mc = MinecraftClient.getInstance();
-
         if (mc.currentScreen != null && !(mc.currentScreen instanceof CreativeInventoryScreen)) {
             return;
         }
@@ -84,29 +69,24 @@ public final class ElytraUtility extends Module {
         }
         beginInventorySwap();
     }
-
     private void beginInventorySwap() {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.player == null || mc.interactionManager == null) {
             return;
         }
-
         long now = System.currentTimeMillis();
         if (swapping || now - lastActionMs < DEBOUNCE_MS) {
             return;
         }
-
         ItemStack chestStack = mc.player.playerScreenHandler.getSlot(CHEST_SLOT_ID).getStack();
         boolean elytraEquipped = chestStack.isOf(Items.ELYTRA);
         int sourceSlotId = elytraEquipped ? findChestplateSlotId() : findElytraSlotId();
         if (sourceSlotId == -1) {
             return;
         }
-
         swapping = true;
         lastActionMs = now;
         mc.setScreen(new InventoryScreen(mc.player));
-
         Thread worker = new Thread(() -> {
             try {
                 Thread.sleep(SWAP_DELAY_MS);
@@ -124,7 +104,6 @@ public final class ElytraUtility extends Module {
         worker.setDaemon(true);
         worker.start();
     }
-
     private void phaze$ensureCreativeInventoryTab() {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc == null || !mc.player.isCreative()) {
@@ -147,11 +126,9 @@ public final class ElytraUtility extends Module {
                     }
                 }
             } catch (Throwable ignored) {
-
             }
         }
     }
-
     private void performSwap(int sourceSlotId) {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.player == null || mc.interactionManager == null) {
@@ -165,7 +142,6 @@ public final class ElytraUtility extends Module {
         mc.interactionManager.clickSlot(syncId, CHEST_SLOT_ID, 0, SlotActionType.PICKUP, mc.player);
         mc.interactionManager.clickSlot(syncId, sourceSlotId, 0, SlotActionType.PICKUP, mc.player);
     }
-
     private void finishSwap() {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.player != null) {
@@ -174,7 +150,6 @@ public final class ElytraUtility extends Module {
         mc.setScreen(null);
         swapping = false;
     }
-
     private int findElytraSlotId() {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.player == null) return -1;
@@ -185,7 +160,6 @@ public final class ElytraUtility extends Module {
         }
         return -1;
     }
-
     private int findChestplateSlotId() {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.player == null) return -1;

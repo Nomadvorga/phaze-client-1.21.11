@@ -19,6 +19,7 @@ public final class Render3DUtil {
     private static final SphereLatitudeLut[] SPHERE_LATITUDE_CACHE = new SphereLatitudeLut[MAX_CACHED_SPHERE_STACKS + 1];
     private static final Vector3f BILLBOARD_RIGHT = new Vector3f();
     private static final Vector3f BILLBOARD_UP = new Vector3f();
+    private static final Vector3f LINE_TANGENT = new Vector3f();
 
     private static final float DEFAULT_LINE_WIDTH = 1.0F;
 
@@ -37,7 +38,7 @@ public final class Render3DUtil {
         float b = (color & 0xFF) / 255.0F;
         float fillA = a * Math.max(0.0F, Math.min(1.0F, fillAlphaScale));
 
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+        BufferBuilder buffer = begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR, 1, true);
 
         buffer.vertex(matrix, x1, y1, z1).color(r, g, b, fillA);
         buffer.vertex(matrix, x2, y1, z1).color(r, g, b, fillA);
@@ -69,7 +70,7 @@ public final class Render3DUtil {
         buffer.vertex(matrix, x2, y2, z2).color(r, g, b, fillA);
         buffer.vertex(matrix, x2, y1, z2).color(r, g, b, fillA);
 
-        vorga.phazeclient.util.render.PhazeRenderLayers.getBlockFill().draw(buffer.end());
+        finish(buffer, 1, true, null);
     }
 
     public static void drawBox(MatrixStack matrices,
@@ -85,7 +86,7 @@ public final class Render3DUtil {
         float b = (color & 0xFF) / 255.0F;
         float fillA = a * Math.max(0.0F, Math.min(1.0F, fillAlphaScale));
 
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+        BufferBuilder buffer = begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR, 1, true);
 
         buffer.vertex(matrix, x1, y1, z1).color(r, g, b, fillA);
         buffer.vertex(matrix, x2, y1, z1).color(r, g, b, fillA);
@@ -116,10 +117,10 @@ public final class Render3DUtil {
         buffer.vertex(matrix, x2, y2, z1).color(r, g, b, fillA);
         buffer.vertex(matrix, x2, y2, z2).color(r, g, b, fillA);
         buffer.vertex(matrix, x2, y1, z2).color(r, g, b, fillA);
-        vorga.phazeclient.util.render.PhazeRenderLayers.getHitboxFill().draw(buffer.end());
+        finish(buffer, 1, true, null);
 
         float lw = Math.max(1.0F, lineWidth);
-        buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH);
+        buffer = begin(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH, lw, true);
 
         line(matrix, buffer, x1, y1, z1, x2, y1, z1, r, g, b, a, lw);
         line(matrix, buffer, x2, y1, z1, x2, y1, z2, r, g, b, a, lw);
@@ -135,7 +136,7 @@ public final class Render3DUtil {
         line(matrix, buffer, x2, y1, z1, x2, y2, z1, r, g, b, a, lw);
         line(matrix, buffer, x2, y1, z2, x2, y2, z2, r, g, b, a, lw);
         line(matrix, buffer, x1, y1, z2, x1, y2, z2, r, g, b, a, lw);
-        vorga.phazeclient.util.render.PhazeRenderLayers.getThickLines(lw).draw(buffer.end());
+        finish(buffer, lw, true, null);
 
     }
 
@@ -201,7 +202,7 @@ public final class Render3DUtil {
         float b = (color & 0xFF) / 255.0F;
         float fillA = a * Math.max(0.0F, Math.min(1.0F, fillAlphaScale));
 
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+        BufferBuilder buffer = begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR, 1, depthTest);
 
         buffer.vertex(matrix, x1, y1, z1).color(r, g, b, fillA);
         buffer.vertex(matrix, x2, y1, z1).color(r, g, b, fillA);
@@ -232,7 +233,7 @@ public final class Render3DUtil {
         buffer.vertex(matrix, x2, y2, z1).color(r, g, b, fillA);
         buffer.vertex(matrix, x2, y2, z2).color(r, g, b, fillA);
         buffer.vertex(matrix, x2, y1, z2).color(r, g, b, fillA);
-        vorga.phazeclient.util.render.PhazeRenderLayers.getHitboxFill().draw(buffer.end());
+        finish(buffer, 1, depthTest, null);
 
     }
 
@@ -258,7 +259,7 @@ public final class Render3DUtil {
 
         CircleLut circle = circleLut(segments);
         SphereLatitudeLut latitudes = sphereLatitudeLut(stacks);
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+        BufferBuilder buffer = begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR, 1, depthTest);
         for (int i = 0; i < latitudes.stacks; i++) {
             float y1 = latitudes.sin[i] * radius;
             float y2 = latitudes.sin[i + 1] * radius;
@@ -281,10 +282,7 @@ public final class Render3DUtil {
                 buffer.vertex(matrix, x12, cy + y1, z12).color(r, g, b, a);
             }
         }
-        net.minecraft.client.render.BuiltBuffer built = buffer.endNullable();
-        if (built != null) {
-            vorga.phazeclient.util.render.PhazeRenderLayers.getHitboxFill().draw(built);
-        }
+        finish(buffer, 1, depthTest, null);
 
     }
 
@@ -317,17 +315,16 @@ public final class Render3DUtil {
         float rx = rightV.x * radius, ry = rightV.y * radius, rz = rightV.z * radius;
         float ux = upV.x * radius,    uy = upV.y * radius,    uz = upV.z * radius;
 
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_TEXTURE_COLOR);
+        BufferBuilder buffer = WorldOverlayRenderer.isRecording()
+                ? WorldOverlayRenderer.texturedBuffer(texture, depthTest)
+                : Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_TEXTURE_COLOR);
 
         buffer.vertex(matrix, cx - rx - ux, cy - ry - uy, cz - rz - uz).texture(0.0F, 1.0F).color(r, g, b, a);
         buffer.vertex(matrix, cx + rx - ux, cy + ry - uy, cz + rz - uz).texture(1.0F, 1.0F).color(r, g, b, a);
         buffer.vertex(matrix, cx + rx + ux, cy + ry + uy, cz + rz + uz).texture(1.0F, 0.0F).color(r, g, b, a);
         buffer.vertex(matrix, cx - rx + ux, cy - ry + uy, cz - rz + uz).texture(0.0F, 0.0F).color(r, g, b, a);
 
-        net.minecraft.client.render.BuiltBuffer built = buffer.endNullable();
-        if (built != null) {
-            vorga.phazeclient.util.render.PhazeRenderLayers.getTextured(texture).draw(built);
-        }
+        finish(buffer, 1, depthTest, texture);
 
     }
 
@@ -366,7 +363,7 @@ public final class Render3DUtil {
         float outer = radius + thickness * 0.5F;
 
         CircleLut circle = circleLut(segments);
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+        BufferBuilder buffer = begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR, 1, depthTest);
         for (int i = 0; i < circle.segments; i++) {
             float c1 = circle.cos[i], s1 = circle.sin[i];
             float c2 = circle.cos[i + 1], s2 = circle.sin[i + 1];
@@ -381,7 +378,7 @@ public final class Render3DUtil {
             buffer.vertex(matrix, ox2, centerY, oz2).color(r, g, b, a);
             buffer.vertex(matrix, ox1, centerY, oz1).color(r, g, b, a);
         }
-        vorga.phazeclient.util.render.PhazeRenderLayers.getHitboxFill().draw(buffer.end());
+        finish(buffer, 1, depthTest, null);
 
     }
 
@@ -402,7 +399,7 @@ public final class Render3DUtil {
         float rb = (rimColor & 0xFF) / 255.0F;
 
         CircleLut circle = circleLut(segments);
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR);
+        BufferBuilder buffer = begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR, 1, depthTest);
         for (int i = 0; i < circle.segments; i++) {
             float x1 = centerX + circle.cos[i] * radius;
             float z1 = centerZ + circle.sin[i] * radius;
@@ -413,7 +410,7 @@ public final class Render3DUtil {
             buffer.vertex(matrix, x1, centerY, z1).color(rr, rg, rb, ra);
             buffer.vertex(matrix, x2, centerY, z2).color(rr, rg, rb, ra);
         }
-        vorga.phazeclient.util.render.PhazeRenderLayers.getTriangles().draw(buffer.end());
+        finish(buffer, 1, depthTest, null);
 
     }
 
@@ -438,7 +435,7 @@ public final class Render3DUtil {
         float lw = Math.max(1.0F, lineWidth);
 
         CircleLut circle = circleLut(segments);
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH);
+        BufferBuilder buffer = begin(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH, lw, depthTest);
         float topY = centerY + height;
         for (int i = 0; i < circle.segments; i++) {
             float x1 = centerX + circle.cos[i] * radius;
@@ -450,7 +447,7 @@ public final class Render3DUtil {
             buffer.vertex(matrix, x1, topY, z1).color(r, g, b, a).normal(0, 1, 0).lineWidth(lw);
             buffer.vertex(matrix, x2, topY, z2).color(r, g, b, a).normal(0, 1, 0).lineWidth(lw);
         }
-        vorga.phazeclient.util.render.PhazeRenderLayers.getThickLines(lw).draw(buffer.end());
+        finish(buffer, lw, depthTest, null);
 
     }
 
@@ -486,7 +483,7 @@ public final class Render3DUtil {
         float lw = Math.max(1.0F, lineWidth);
 
         CircleLut circle = circleLut(segments);
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH);
+        BufferBuilder buffer = begin(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH, lw, depthTest);
         for (int i = 0; i < circle.segments; i++) {
             float c1 = circle.cos[i], s1 = circle.sin[i];
             float c2 = circle.cos[i + 1], s2 = circle.sin[i + 1];
@@ -500,7 +497,7 @@ public final class Render3DUtil {
             buffer.vertex(matrix, p1x, p1y, p1z).color(r, g, b, a).normal(0, 1, 0).lineWidth(lw);
             buffer.vertex(matrix, p2x, p2y, p2z).color(r, g, b, a).normal(0, 1, 0).lineWidth(lw);
         }
-        vorga.phazeclient.util.render.PhazeRenderLayers.getThickLines(lw).draw(buffer.end());
+        finish(buffer, lw, depthTest, null);
 
     }
 
@@ -534,7 +531,7 @@ public final class Render3DUtil {
         float vz = nx * uy - ny * ux;
 
         CircleLut circle = circleLut(segments);
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+        BufferBuilder buffer = begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR, 1, depthTest);
         for (int i = 0; i < circle.segments; i++) {
             float c1 = circle.cos[i], s1 = circle.sin[i];
             float c2 = circle.cos[i + 1], s2 = circle.sin[i + 1];
@@ -557,7 +554,7 @@ public final class Render3DUtil {
             buffer.vertex(matrix, ox2, oy2, oz2).color(r, g, b, a);
             buffer.vertex(matrix, ox1, oy1, oz1).color(r, g, b, a);
         }
-        vorga.phazeclient.util.render.PhazeRenderLayers.getHitboxFill().draw(buffer.end());
+        finish(buffer, 1, depthTest, null);
 
     }
 
@@ -596,9 +593,9 @@ public final class Render3DUtil {
         double dy = endY - startY;
         double dz = endZ - startZ;
         double length = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        float normalX = length > 1.0E-7 ? (float) (dx / length) : 0.0F;
-        float normalY = length > 1.0E-7 ? (float) (dy / length) : 1.0F;
-        float normalZ = length > 1.0E-7 ? (float) (dz / length) : 0.0F;
+        if (!Double.isFinite(length) || length < 1.0E-7) return;
+        matrices.peek().transformNormal((float) (dx / length), (float) (dy / length), (float) (dz / length), LINE_TANGENT);
+        float normalX = LINE_TANGENT.x, normalY = LINE_TANGENT.y, normalZ = LINE_TANGENT.z;
         float lw = Math.max(1.0F, lineWidth);
         float a1 = ((startColor >>> 24) & 0xFF) / 255.0F;
         float r1 = ((startColor >>> 16) & 0xFF) / 255.0F;
@@ -634,7 +631,7 @@ public final class Render3DUtil {
 
         float lw = Math.max(1.0F, lineWidth);
 
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH);
+        BufferBuilder buffer = begin(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH, lw, true);
         buffer.vertex(matrix,
                 (float) (start.x - camera.x),
                 (float) (start.y - camera.y),
@@ -643,7 +640,7 @@ public final class Render3DUtil {
                 (float) (end.x - camera.x),
                 (float) (end.y - camera.y),
                 (float) (end.z - camera.z)).color(r, gC, b, a).normal(0, 1, 0).lineWidth(lw);
-        vorga.phazeclient.util.render.PhazeRenderLayers.getThickLines(lw).draw(buffer.end());
+        finish(buffer, lw, true, null);
 
     }
 
@@ -661,6 +658,7 @@ public final class Render3DUtil {
 
         Vec3d origin = points.get(0);
         matrices.push();
+        try {
         matrices.translate(origin.x + offsetX, origin.y + offsetY, origin.z + offsetZ);
         Matrix4f matrix = matrices.peek().getPositionMatrix();
         float a = ((color >>> 24) & 0xFF) / 255.0F;
@@ -670,7 +668,7 @@ public final class Render3DUtil {
 
         float lw = Math.max(1.0F, lineWidth);
 
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH);
+        BufferBuilder buffer = begin(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH, lw, depthTest);
         for (int i = 0; i < points.size() - 1; i++) {
             Vec3d start = points.get(i);
             Vec3d end = points.get(i + 1);
@@ -691,9 +689,11 @@ public final class Render3DUtil {
                     (float) (end.y - origin.y),
                     (float) (end.z - origin.z)).color(r, g, b, a).normal(normalX, normalY, normalZ).lineWidth(lw);
         }
-        vorga.phazeclient.util.render.PhazeRenderLayers.getThickLines(lw).draw(buffer.end());
+        finish(buffer, lw, depthTest, null);
 
-        matrices.pop();
+        } finally {
+            matrices.pop();
+        }
     }
 
     public static void drawPolylineFaded(MatrixStack matrices,
@@ -717,6 +717,7 @@ public final class Render3DUtil {
         }
         Vec3d origin = points.get(0);
         matrices.push();
+        try {
         matrices.translate(origin.x + offsetX, origin.y + offsetY, origin.z + offsetZ);
         Matrix4f matrix = matrices.peek().getPositionMatrix();
         float maxA = ((color >>> 24) & 0xFF) / 255.0F;
@@ -726,7 +727,7 @@ public final class Render3DUtil {
 
         float lw = Math.max(1.0F, lineWidth);
 
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH);
+        BufferBuilder buffer = begin(VertexFormat.DrawMode.LINES, VertexFormats.POSITION_COLOR_NORMAL_LINE_WIDTH, lw, depthTest);
 
         double accLen = 0.0;
         for (int i = 0; i < points.size() - 1; i++) {
@@ -772,9 +773,23 @@ public final class Render3DUtil {
 
             accLen = endLen;
         }
-        vorga.phazeclient.util.render.PhazeRenderLayers.getThickLines(lw).draw(buffer.end());
+        finish(buffer, lw, depthTest, null);
 
-        matrices.pop();
+        } finally {
+            matrices.pop();
+        }
+    }
+
+    private static BufferBuilder begin(VertexFormat.DrawMode mode, VertexFormat format, float width, boolean depth) {
+        return WorldOverlayRenderer.isRecording() ? WorldOverlayRenderer.buffer(mode, format, width, depth)
+                : Tessellator.getInstance().begin(mode, format);
+    }
+
+    private static void finish(BufferBuilder buffer, float width, boolean depth, net.minecraft.util.Identifier texture) {
+        if (WorldOverlayRenderer.isRecording()) return;
+        try (net.minecraft.client.render.BuiltBuffer built = buffer.endNullable()) {
+            if (built != null) WorldOverlayRenderer.drawBuffer(built, width, depth, texture);
+        }
     }
 
     private static boolean hasRenderablePolylineSegment(java.util.List<Vec3d> points) {

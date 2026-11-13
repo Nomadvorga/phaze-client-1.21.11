@@ -1,15 +1,12 @@
 package vorga.phazeclient.implement.menu.components.implement.settings;
 
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.util.math.MatrixStack;
 import org.joml.Matrix3x2fStack;
 import vorga.phazeclient.api.system.animation.Animation;
 import vorga.phazeclient.api.system.animation.Direction;
 import vorga.phazeclient.api.system.animation.implement.DecelerateAnimation;
 import vorga.phazeclient.api.feature.module.setting.implement.BooleanSetting;
-import vorga.phazeclient.api.system.font.Fonts;
-import vorga.phazeclient.base.util.other.StringUtil;
-import vorga.phazeclient.base.util.render.GuiMatrix;
+import vorga.phazeclient.implement.menu.font.GuiFonts;
 import vorga.phazeclient.implement.menu.MenuStyle;
 import vorga.phazeclient.implement.menu.components.implement.other.CheckComponent;
 import vorga.phazeclient.base.util.math.MathUtil;
@@ -30,7 +27,7 @@ public class CheckboxComponent extends AbstractSettingComponent {
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         updateVisibilityAnimation();
-        var labelFont = Fonts.getSize(14, INTER_BOLD);
+        var labelFont = GuiFonts.getSize(14, INTER_BOLD);
 
         boolean isModified = setting.isModified();
         float textOffset = animatedTextOffset(isModified);
@@ -41,24 +38,22 @@ public class CheckboxComponent extends AbstractSettingComponent {
         activeAnimation.setDirection(setting.isValue() ? Direction.FORWARDS : Direction.BACKWARDS);
         float activeProgress = activeAnimation.getOutputFloat();
 
-        String wrapped = StringUtil.wrap(setting.getLocalizedName(), (int) (width - 30 - textOffset), 14);
-        float wrappedHeight = Fonts.getSize(14).getStringHeight(wrapped);
-        height = (int) (20 + Math.max(0, (wrappedHeight - 14) / 2));
+        String wrapped = label.singleLine(setting.getLocalizedName());
+        height = ROW_HEIGHT;
 
         renderSettingCard(context, activeProgress, hoverProgress);
 
         Matrix3x2fStack matrix = context.getMatrices();
-        MatrixStack textPose = new MatrixStack();
-        textPose.multiplyPositionMatrix(GuiMatrix.mat4(matrix));
 
         resetIcon.position(x, y, height).alpha(currentAlpha).modified(isModified).render(context);
 
         float textX = x + 10 + textOffset;
         float textY = centeredTextY(labelFont, wrapped);
         int textColor = MenuStyle.mix(primaryText(), MenuStyle.withAlpha(0xFFFFFFFF, currentAlpha), hoverProgress * 0.16f);
-        labelFont.drawString(textPose, wrapped, textX, textY, textColor);
+        label.render(matrix, labelFont, wrapped, textX, textY, x + width - 37, y, height, textColor);
+        updateLabelHover(mouseX, mouseY);
 
-        ((CheckComponent) checkComponent.position(x + width - 29, y + height / 2 - 5.0F))
+        ((CheckComponent) checkComponent.position(x + width - 29, y + (height - CheckComponent.getToggleHeight()) / 2.0F))
                 .setRunnable(() -> setting.setValue(!setting.isValue()))
                 .setState(setting.isValue())
                 .setAlpha(currentAlpha)

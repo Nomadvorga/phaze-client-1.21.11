@@ -48,6 +48,11 @@ credentials.json
 service-account*.json
 secrets.*
 *.pem
+!security/manifest-ed25519-public.pem
 *.p12
 *.pfx
 id_rsa
+
+# Client runtime data written by dev/test runs
+Phaze/
+logs/

@@ -11,7 +11,6 @@ public final class ComboCounterHud extends RectHudModule {
         return INSTANCE;
     }
 
-    public final SectionSetting otherSection = new SectionSetting("Other");
 
     public final BooleanSetting reverseOrder = new BooleanSetting("Reverse Order", "Show value before label, e.g. \"3 Combo\" instead of \"Combo 3\"").setValue(false);
 
@@ -22,7 +21,7 @@ public final class ComboCounterHud extends RectHudModule {
     private ComboCounterHud() {
         super("combo_counter_hud", "Combo Counter", 100.0f, 50.0f, 1.0f);
         reverseOrder.setFullWidth(true);
-        setup(otherSection, reverseOrder, cornerRounding);
+        setup(reverseOrder);
     }
 
     public void onAttack(LivingEntity target) {

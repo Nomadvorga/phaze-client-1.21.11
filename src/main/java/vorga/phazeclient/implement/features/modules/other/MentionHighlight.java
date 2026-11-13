@@ -1,5 +1,4 @@
 package vorga.phazeclient.implement.features.modules.other;
-
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.sound.PositionedSoundInstance;
 import net.minecraft.sound.SoundEvent;
@@ -17,14 +16,11 @@ import vorga.phazeclient.api.feature.module.setting.implement.ColorSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.SectionSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.TextSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.ValueSetting;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
-
 public final class MentionHighlight extends Module {
     private static final MentionHighlight INSTANCE = new MentionHighlight();
-
     public final SectionSetting matchSection = new SectionSetting("Match");
     public final BooleanSetting matchUsername = new BooleanSetting(
             "Match Your Username",
@@ -34,7 +30,6 @@ public final class MentionHighlight extends Module {
             "Extra Triggers",
             "Comma-separated list of extra words that count as a mention (case-insensitive)"
     ).setText("");
-
     public final SectionSetting visualSection = new SectionSetting("Visual");
     public final BooleanSetting recolor = new BooleanSetting(
             "Recolor Match",
@@ -52,7 +47,6 @@ public final class MentionHighlight extends Module {
             "Underline",
             "Underline the matched substring"
     ).setValue(false);
-
     public final SectionSetting soundSection = new SectionSetting("Sound");
     public final BooleanSetting playSound = new BooleanSetting(
             "Play Sound",
@@ -66,21 +60,15 @@ public final class MentionHighlight extends Module {
             "Pitch",
             "Sound pitch multiplier"
     ).range(0.5F, 2.0F).step(0.05F).setValue(1.4F);
-
     private static final long SOUND_COOLDOWN_MS = 350L;
-
     private static final long ECHO_WINDOW_MS = 2000L;
-
     private volatile String lastOutgoing = null;
     private volatile long lastOutgoingAtMs = 0L;
-
     private long lastSoundAtMs = 0L;
     private List<Pattern> compiledTriggers = null;
     private String compiledTriggersFromText = null;
-
     private MentionHighlight() {
         super("mention_highlight", "Mention Highlight", ModuleCategory.UTILITIES);
-
         matchUsername.setFullWidth(true);
         extraTriggers.setFullWidth(true);
         recolor.setFullWidth(true);
@@ -90,33 +78,27 @@ public final class MentionHighlight extends Module {
         playSound.setFullWidth(true);
         volume.setFullWidth(true);
         pitch.setFullWidth(true);
-
         setup(
                 matchSection, matchUsername, extraTriggers,
                 visualSection, recolor, highlightColor, bold, underline,
                 soundSection, playSound, volume, pitch
         );
     }
-
     public static MentionHighlight getInstance() {
         return INSTANCE;
     }
-
     @Override
     public String getDescription() {
         return "Highlights mentions of your name in chat and plays a ping sound";
     }
-
     @Override
     public String getIcon() {
         return "mention_highlight.png";
     }
-
     @Override
     public float getIconSize() {
         return 21.0F;
     }
-
     public void markOutgoing(String content) {
         if (!isEnabled() || content == null) {
             return;
@@ -124,31 +106,25 @@ public final class MentionHighlight extends Module {
         lastOutgoing = normalizeForEcho(content);
         lastOutgoingAtMs = System.currentTimeMillis();
     }
-
     public void markOutgoing() {
         markOutgoing("");
     }
-
     public Text processIncoming(Text original) {
         if (!isEnabled() || original == null) {
             return original;
         }
-
         String flat = original.getString();
         if (flat == null || flat.isEmpty()) {
             return original;
         }
         String normalizedFlat = normalizeForEcho(flat);
-
         MinecraftClient mcc = MinecraftClient.getInstance();
-
         String selfName = (mcc != null && mcc.player != null)
                 ? mcc.player.getGameProfile().name()
                 : null;
         if (selfName != null && !selfName.isEmpty() && isSelfAuthored(flat, selfName)) {
             return original;
         }
-
         List<Pattern> triggers = resolveTriggers();
         boolean hit = false;
         for (Pattern p : triggers) {
@@ -160,76 +136,59 @@ public final class MentionHighlight extends Module {
         if (!hit) {
             return original;
         }
-
         long now = System.currentTimeMillis();
         String pending = lastOutgoing;
         if (pending != null && !pending.isEmpty()) {
             long age = now - lastOutgoingAtMs;
             if (age > ECHO_WINDOW_MS) {
-
                 lastOutgoing = null;
             } else if (matchesOutgoingEcho(normalizedFlat, pending)) {
                 lastOutgoing = null;
                 return original;
             }
         }
-
         if (playSound.isValue() && now - lastSoundAtMs >= SOUND_COOLDOWN_MS) {
             playPingSound();
             lastSoundAtMs = now;
         }
-
         if (!recolor.isValue() && !bold.isValue() && !underline.isValue()) {
-
             return original;
         }
-
         return rebuildWithHighlights(original, triggers);
     }
-
     private List<Pattern> resolveTriggers() {
-
         MinecraftClient mc = MinecraftClient.getInstance();
-
         String username = (mc != null && mc.player != null && matchUsername.isValue())
                 ? mc.player.getGameProfile().name()
                 : null;
         String extras = extraTriggers.getText();
         String key = (username == null ? "" : username) + "\u0000" + (extras == null ? "" : extras);
-
         if (compiledTriggers != null && key.equals(compiledTriggersFromText)) {
             return compiledTriggers;
         }
-
         List<Pattern> built = new ArrayList<>();
         if (username != null && !username.isEmpty()) {
-
             built.add(Pattern.compile(Pattern.quote(username), Pattern.CASE_INSENSITIVE));
         }
         if (extras != null) {
             for (String raw : extras.split(",")) {
                 String t = raw.trim();
                 if (t.isEmpty()) continue;
-
                 built.add(Pattern.compile("\\b" + Pattern.quote(t) + "\\b", Pattern.CASE_INSENSITIVE));
             }
         }
-
         compiledTriggers = built;
         compiledTriggersFromText = key;
         return built;
     }
-
     private Text rebuildWithHighlights(Text original, List<Pattern> triggers) {
         Style highlightStyle = buildHighlightStyle();
         return walk(original, triggers, highlightStyle);
     }
-
     private Text walk(Text node, List<Pattern> triggers, Style highlight) {
         Text rewritten = node.getContent() instanceof PlainTextContent ptc
                 ? rewriteSegment(ptc.string(), node.getStyle(), triggers, highlight)
                 : null;
-
         MutableText acc;
         if (rewritten != null) {
             acc = rewritten.copy();
@@ -241,19 +200,16 @@ public final class MentionHighlight extends Module {
         }
         return acc;
     }
-
     private Text rewriteSegment(String segment, Style baseStyle, List<Pattern> triggers, Style highlight) {
         if (segment == null || segment.isEmpty()) {
             return Text.empty().setStyle(baseStyle);
         }
-
         Pattern combined = combine(triggers);
         java.util.regex.Matcher m = combined.matcher(segment);
         if (!m.find()) {
             return Text.literal(segment).setStyle(baseStyle);
         }
         m.reset();
-
         MutableText out = Text.empty().setStyle(baseStyle);
         int last = 0;
         while (m.find()) {
@@ -262,7 +218,6 @@ public final class MentionHighlight extends Module {
             if (start > last) {
                 out.append(Text.literal(segment.substring(last, start)).setStyle(baseStyle));
             }
-
             Style merged = mergeStyles(baseStyle, highlight);
             out.append(Text.literal(segment.substring(start, end)).setStyle(merged));
             last = end;
@@ -272,7 +227,6 @@ public final class MentionHighlight extends Module {
         }
         return out;
     }
-
     private Pattern combine(List<Pattern> triggers) {
         if (triggers.size() == 1) return triggers.get(0);
         StringBuilder sb = new StringBuilder();
@@ -282,7 +236,6 @@ public final class MentionHighlight extends Module {
         }
         return Pattern.compile(sb.toString(), Pattern.CASE_INSENSITIVE);
     }
-
     private Style mergeStyles(Style base, Style highlight) {
         Style s = base;
         TextColor color = highlight.getColor();
@@ -297,12 +250,9 @@ public final class MentionHighlight extends Module {
         }
         return s;
     }
-
     private Style buildHighlightStyle() {
-
         Style s = Style.EMPTY;
         if (recolor.isValue()) {
-
             int rgb = highlightColor.getColor() & 0x00FFFFFF;
             s = s.withColor(TextColor.fromRgb(rgb));
         }
@@ -314,23 +264,19 @@ public final class MentionHighlight extends Module {
         }
         return s;
     }
-
     private void playPingSound() {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc == null) return;
         SoundEvent event = SoundEvents.BLOCK_NOTE_BLOCK_PLING.value();
         float v = clamp(volume.getValue(), 0.0F, 1.0F);
         float p = clamp(pitch.getValue(), 0.5F, 2.0F);
-
         mc.getSoundManager().play(PositionedSoundInstance.ui(event, p, v));
     }
-
     private static float clamp(float v, float lo, float hi) {
         if (v < lo) return lo;
         if (v > hi) return hi;
         return v;
     }
-
     private static String normalizeForEcho(String s) {
         if (s == null || s.isEmpty()) return "";
         StringBuilder out = new StringBuilder(s.length());
@@ -355,7 +301,6 @@ public final class MentionHighlight extends Module {
         while (end > start && out.charAt(end - 1) == ' ') end--;
         return out.substring(start, end);
     }
-
     private static boolean matchesOutgoingEcho(String incoming, String pendingOutgoing) {
         if (incoming == null || pendingOutgoing == null
                 || incoming.isEmpty() || pendingOutgoing.isEmpty()) {
@@ -364,7 +309,6 @@ public final class MentionHighlight extends Module {
         if (incoming.contains(pendingOutgoing) || pendingOutgoing.contains(incoming)) {
             return true;
         }
-
         if (pendingOutgoing.length() < 6) {
             return false;
         }
@@ -376,9 +320,7 @@ public final class MentionHighlight extends Module {
         }
         return matched >= 2;
     }
-
     private static boolean isSelfAuthored(String flat, String selfName) {
-
         int max = Math.min(flat.length(), 80);
         int sep = -1;
         for (int i = 0; i < max; i++) {
@@ -389,13 +331,11 @@ public final class MentionHighlight extends Module {
             }
         }
         if (sep < 0) {
-
             return false;
         }
         String header = flat.substring(0, sep);
         String lowerHeader = header.toLowerCase();
         String lowerName = selfName.toLowerCase();
-
         int idx = lowerHeader.indexOf(lowerName);
         while (idx >= 0) {
             boolean leftOk = idx == 0 || !Character.isLetterOrDigit(lowerHeader.charAt(idx - 1));

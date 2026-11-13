@@ -6,12 +6,12 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
-import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import vorga.phazeclient.base.util.RemoteRulesService;
+import vorga.phazeclient.base.util.PhazeEventService;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -21,8 +21,11 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -30,6 +33,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class CosmeticsSyncService {
@@ -39,6 +43,13 @@ public final class CosmeticsSyncService {
     private static final int READ_TIMEOUT_MS = 15_000;
     private static final int MAX_QUERY_PLAYERS = 200;
     private static final long FALLBACK_REFRESH_MS = 10L * 60L * 1000L;
+    private static final int MAX_CACHED_PLAYERS = 4096;
+    private static final long ROSTER_CHECK_MS = 500L;
+    private static final long BATCH_WINDOW_MS = 400L;
+    private static final long MIN_QUERY_INTERVAL_MS = 5_000L;
+    private static final long FAILURE_BACKOFF_MIN_MS = 5_000L;
+    private static final long FAILURE_BACKOFF_MAX_MS = 120_000L;
+    private static final long RATE_LIMITED_BACKOFF_MS = 65_000L;
     private static final String SLOT_SEPARATOR = "|";
 
     private static final String LEGACY_SOURCE = "pu" + "lse";
@@ -52,6 +63,12 @@ public final class CosmeticsSyncService {
             });
     private final Map<UUID, RemoteCosmetic> states = new ConcurrentHashMap<>();
     private final Map<UUID, PhazeRemoteCosmetic> phazeStates = new ConcurrentHashMap<>();
+    // Each source is confirmed separately: a push from one must not hide the other.
+    private final Map<UUID, Long> confirmedAt = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> phazeConfirmedAt = new ConcurrentHashMap<>();
+    private final Map<UUID, String> publishedPayloads = new ConcurrentHashMap<>();
+    private final Set<UUID> cachedPlayers = new HashSet<>();
+    private final AtomicInteger cacheEpoch = new AtomicInteger();
     private final Map<String, PhazeGraffiti> phazeGraffiti = new ConcurrentHashMap<>();
     private final AtomicBoolean queryInFlight = new AtomicBoolean(false);
     private final AtomicBoolean graffitiQueryInFlight = new AtomicBoolean(false);
@@ -59,13 +76,15 @@ public final class CosmeticsSyncService {
 
     private ScheduledFuture<?> pendingPublish;
     private UUID localPlayerUuid;
-    private String rosterFingerprint = "";
     private long lastRosterCheckMs;
-    private volatile long lastQueryMs;
+    private long pendingSinceMs;
+    private volatile long nextQueryAllowedMs;
+    private volatile long failureBackoffMs = FAILURE_BACKOFF_MIN_MS;
+    private volatile long nextPublishAllowedMs;
     private volatile boolean publishOnJoin = true;
-    private volatile boolean forceRefresh;
     private volatile String graffitiContext = "";
     private volatile long lastGraffitiQueryMs;
+    private volatile long nextGraffitiQueryAllowedMs;
     private volatile long lastPhazeCosmeticRevision;
     private volatile long lastPhazeGraffitiRevision;
 
@@ -80,10 +99,10 @@ public final class CosmeticsSyncService {
         if (client == null || client.player == null || client.world == null
                 || client.getNetworkHandler() == null) {
             localPlayerUuid = null;
-            rosterFingerprint = "";
-            states.clear();
-            phazeStates.clear();
+            pendingSinceMs = 0L;
+            // Cosmetic presence is global; only world-local graffiti is discarded.
             phazeGraffiti.clear();
+            pendingGraffitiQuery.set(null);
             graffitiContext = "";
             publishOnJoin = true;
             return;
@@ -92,36 +111,37 @@ public final class CosmeticsSyncService {
         UUID currentUuid = client.player.getUuid();
         if (!currentUuid.equals(localPlayerUuid)) {
             localPlayerUuid = currentUuid;
-            rosterFingerprint = "";
             publishOnJoin = true;
-            forceRefresh = true;
         }
-        if (publishOnJoin) {
+        long now = System.currentTimeMillis();
+        if (publishOnJoin && now >= nextPublishAllowedMs) {
             publishOnJoin = false;
             publishLocalState();
         }
 
-        long now = System.currentTimeMillis();
-        if (!forceRefresh && now - lastRosterCheckMs < 2_000L) return;
+        if (now - lastRosterCheckMs < ROSTER_CHECK_MS) return;
         lastRosterCheckMs = now;
 
         List<UUID> players = loadedPlayerUuids(client);
-        String fingerprint = players.toString();
-        boolean rosterChanged = !fingerprint.equals(rosterFingerprint);
-        boolean fallbackDue = now - lastQueryMs >= FALLBACK_REFRESH_MS;
-        if (forceRefresh || rosterChanged || fallbackDue) {
-            forceRefresh = false;
-            rosterFingerprint = fingerprint;
-            query(players);
-            if (rosterChanged) {
-                io.schedule(() -> forceRefresh = true, 2L, TimeUnit.SECONDS);
-            }
+        trimCache(players);
+        List<UUID> unknown = unconfirmed(players, now);
+        if (unknown.isEmpty()) {
+            pendingSinceMs = 0L;
+        } else {
+            if (pendingSinceMs == 0L) pendingSinceMs = now;
+            if (now - pendingSinceMs >= BATCH_WINDOW_MS && now >= nextQueryAllowedMs
+                    && query(unknown)) pendingSinceMs = 0L;
         }
 
         String serverKey = vorga.phazeclient.implement.cosmetics.bridge.SharedWorldKey.get(client);
         String dimension = vorga.phazeclient.implement.cosmetics.bridge.SharedWorldKey.dimension(client);
         String context = String.valueOf(serverKey) + '|' + dimension;
-        if (serverKey != null && dimension != null
+        if (!context.equals(graffitiContext)) {
+            phazeGraffiti.clear();
+            graffitiContext = context;
+            lastGraffitiQueryMs = 0L;
+        }
+        if (serverKey != null && dimension != null && now >= nextGraffitiQueryAllowedMs
                 && (!context.equals(graffitiContext)
                 || now - lastGraffitiQueryMs >= FALLBACK_REFRESH_MS)) {
             graffitiContext = context;
@@ -135,8 +155,15 @@ public final class CosmeticsSyncService {
     }
 
     public void requestRefresh() {
-        forceRefresh = true;
+        invalidatePresence();
         lastGraffitiQueryMs = 0L;
+    }
+
+    private void invalidatePresence() {
+        cacheEpoch.incrementAndGet();
+        confirmedAt.clear();
+        phazeConfirmedAt.clear();
+        // A stream reconnect must not bypass an active HTTP rate-limit backoff.
     }
 
     public void acceptEvent(JsonObject event) {
@@ -149,8 +176,9 @@ public final class CosmeticsSyncService {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client == null) return;
             client.execute(() -> {
-                if (!isLoadedPlayer(uuid)) return;
                 putIfNewer(uuid, decoded);
+                confirmedAt.put(uuid, System.currentTimeMillis());
+                trimCache(List.of());
             });
         } catch (Throwable error) {
             LOG.debug("invalid cosmetic event: {}", error.toString());
@@ -169,8 +197,9 @@ public final class CosmeticsSyncService {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client == null) return;
             client.execute(() -> {
-                if (!isLoadedPlayer(uuid)) return;
                 putPhazeIfNewer(uuid, decoded);
+                phazeConfirmedAt.put(uuid, System.currentTimeMillis());
+                trimCache(List.of());
             });
         } catch (Throwable error) {
             LOG.debug("invalid phaze cosmetic event: {}", error.toString());
@@ -218,7 +247,7 @@ public final class CosmeticsSyncService {
             long graffiti = revisions.get("graffiti").getAsLong();
             if (cosmetic > lastPhazeCosmeticRevision) {
                 lastPhazeCosmeticRevision = cosmetic;
-                forceRefresh = true;
+                invalidatePresence();
             }
             if (graffiti > lastPhazeGraffitiRevision) {
                 lastPhazeGraffitiRevision = graffiti;
@@ -303,39 +332,76 @@ public final class CosmeticsSyncService {
 
     private void postLocalState() {
         MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null) return;
+        client.execute(() -> prepareLocalState(client));
+    }
+
+    private void prepareLocalState(MinecraftClient client) {
         if (client == null || client.player == null) {
             publishOnJoin = true;
             return;
         }
         RemoteRulesService rules = RemoteRulesService.getInstance();
-        if (rules.getApiBase() == null || rules.getApiBase().isBlank()) return;
+        if (rules.getApiBase() == null || rules.getApiBase().isBlank()) {
+            nextPublishAllowedMs = System.currentTimeMillis() + FAILURE_BACKOFF_MIN_MS;
+            publishOnJoin = true;
+            return;
+        }
 
         CosmeticsState local = CosmeticsState.getInstance();
         JsonObject body = new JsonObject();
         body.addProperty("clientId", rules.getClientId());
-        body.addProperty("playerUuid", client.player.getUuid().toString());
         String wing = local.isWingEquipped() ? local.getSelectedWing() : CosmeticsState.NONE;
         String cape = local.isCapeEquipped() ? local.getSelectedCape() : CosmeticsState.NONE;
         String hat = local.isHatEquipped() ? local.getSelectedHat() : CosmeticsState.NONE;
         String pet = local.isPetEquipped() ? local.getSelectedPet() : CosmeticsState.NONE;
-        body.addProperty("cosmetic", String.join(SLOT_SEPARATOR, wing, cape, hat, pet));
-        body.addProperty("equipped", local.isEquipped());
+        String cosmetic = String.join(SLOT_SEPARATOR, wing, cape, hat, pet);
+        boolean equipped = local.isEquipped();
+        UUID playerUuid = client.player.getUuid();
+        String payloadKey = rules.getApiBase() + '#' + rules.getClientId() + '#' + cosmetic + '#' + equipped;
+        if (payloadKey.equals(publishedPayloads.get(playerUuid))) return;
+        body.addProperty("playerUuid", playerUuid.toString());
+        body.addProperty("cosmetic", cosmetic);
+        body.addProperty("equipped", equipped);
+        io.execute(() -> sendLocalState(playerUuid, payloadKey, body));
+    }
+
+    private void sendLocalState(UUID playerUuid, String payloadKey, JsonObject body) {
+        if (payloadKey.equals(publishedPayloads.get(playerUuid))) return;
+        long now = System.currentTimeMillis();
+        if (now < nextPublishAllowedMs) {
+            publishOnJoin = true;
+            return;
+        }
         try {
             request("/api/cosmetics/state", body);
+            if (publishedPayloads.size() >= 64 && !publishedPayloads.containsKey(playerUuid)) publishedPayloads.clear();
+            publishedPayloads.put(playerUuid, payloadKey);
+        } catch (HttpStatusException error) {
+            LOG.debug("state publish rejected: HTTP {}", error.status);
+            if (error.status == 429 || error.status >= 500) {
+                nextPublishAllowedMs = now + (error.status == 429 ? RATE_LIMITED_BACKOFF_MS : FAILURE_BACKOFF_MIN_MS);
+                publishOnJoin = true;
+            }
         } catch (Throwable error) {
             LOG.debug("state publish failed: {}", error.toString());
+            nextPublishAllowedMs = System.currentTimeMillis() + FAILURE_BACKOFF_MIN_MS;
             publishOnJoin = true;
         }
     }
 
-    private void query(List<UUID> playerUuids) {
-        if (playerUuids.isEmpty() || !queryInFlight.compareAndSet(false, true)) return;
+    private boolean query(List<UUID> playerUuids) {
+        if (playerUuids.isEmpty() || !queryInFlight.compareAndSet(false, true)) return false;
         String apiBase = RemoteRulesService.getInstance().getApiBase();
         if (apiBase == null || apiBase.isBlank()) {
             queryInFlight.set(false);
-            return;
+            return false;
         }
-        List<UUID> requested = List.copyOf(playerUuids);
+        List<UUID> requested = List.copyOf(playerUuids.size() > MAX_QUERY_PLAYERS
+                ? playerUuids.subList(0, MAX_QUERY_PLAYERS) : playerUuids);
+        long startedAt = System.currentTimeMillis();
+        int epoch = cacheEpoch.get();
+        nextQueryAllowedMs = startedAt + MIN_QUERY_INTERVAL_MS;
         io.execute(() -> {
             try {
                 JsonObject body = new JsonObject();
@@ -348,24 +414,24 @@ public final class CosmeticsSyncService {
                 body.add("sources", sources);
                 JsonObject response = request("/api/cosmetics/query", body);
                 JsonArray array = response.getAsJsonArray("states");
-                Map<UUID, Boolean> returned = new ConcurrentHashMap<>();
-                Map<UUID, Boolean> phazeReturned = new ConcurrentHashMap<>();
+                Set<UUID> requestedSet = new HashSet<>(requested);
+                Map<UUID, RemoteCosmetic> returned = new HashMap<>();
+                Map<UUID, PhazeRemoteCosmetic> phazeReturned = new HashMap<>();
                 if (array != null) {
                     for (JsonElement element : array) {
                         if (!element.isJsonObject()) continue;
                         JsonObject value = element.getAsJsonObject();
                         UUID uuid = UUID.fromString(value.get("playerUuid").getAsString());
+                        if (!requestedSet.contains(uuid)) continue;
                         String source = value.has("source") ? value.get("source").getAsString() : "phaze";
                         if (LEGACY_SOURCE.equals(source)) {
-                            phazeReturned.put(uuid, Boolean.TRUE);
-                            putPhazeIfNewer(uuid, decodePhaze(
+                            phazeReturned.put(uuid, decodePhaze(
                                     value.get("cosmetic").getAsString(),
                                     value.get("equipped").getAsBoolean(),
                                     value.get("updatedAt").getAsLong()
                             ));
-                        } else {
-                            returned.put(uuid, Boolean.TRUE);
-                            putIfNewer(uuid, decode(
+                        } else if ("phaze".equals(source)) {
+                            returned.put(uuid, decode(
                                     value.get("cosmetic").getAsString(),
                                     value.get("equipped").getAsBoolean(),
                                     value.get("updatedAt").getAsLong()
@@ -373,21 +439,64 @@ public final class CosmeticsSyncService {
                         }
                     }
                 }
-                for (UUID uuid : requested) {
-                    if (!returned.containsKey(uuid)) states.remove(uuid);
-                    if (!phazeReturned.containsKey(uuid)) phazeStates.remove(uuid);
-                }
-                lastQueryMs = System.currentTimeMillis();
+                MinecraftClient client = MinecraftClient.getInstance();
+                if (client != null) client.execute(() -> {
+                    if (cacheEpoch.get() != epoch) return;
+                    returned.forEach(this::putIfNewer);
+                    phazeReturned.forEach(this::putPhazeIfNewer);
+                    long confirmed = System.currentTimeMillis();
+                    for (UUID uuid : requested) {
+                        // Do not remove a push received after this query began.
+                        if (!returned.containsKey(uuid)) states.computeIfPresent(uuid, (ignored, state) ->
+                                state.receivedAt < startedAt ? null : state);
+                        if (!phazeReturned.containsKey(uuid)) phazeStates.computeIfPresent(uuid, (ignored, state) ->
+                                state.receivedAt < startedAt ? null : state);
+                        confirmedAt.put(uuid, confirmed);
+                        phazeConfirmedAt.put(uuid, confirmed);
+                        cachedPlayers.add(uuid);
+                    }
+                    trimCache(requested);
+                });
+                failureBackoffMs = FAILURE_BACKOFF_MIN_MS;
+            } catch (HttpStatusException error) {
+                LOG.debug("roster query rejected: HTTP {}", error.status);
+                if (error.status == 429) nextQueryAllowedMs = System.currentTimeMillis() + RATE_LIMITED_BACKOFF_MS;
+                else if (error.status >= 400 && error.status < 500) {
+                    MinecraftClient client = MinecraftClient.getInstance();
+                    if (client != null) client.execute(() -> {
+                        if (cacheEpoch.get() != epoch) return;
+                        long confirmed = System.currentTimeMillis();
+                        requested.forEach(uuid -> {
+                            confirmedAt.put(uuid, confirmed);
+                            phazeConfirmedAt.put(uuid, confirmed);
+                            cachedPlayers.add(uuid);
+                        });
+                        trimCache(requested);
+                    });
+                    nextQueryAllowedMs = System.currentTimeMillis() + FAILURE_BACKOFF_MAX_MS;
+                } else backOff();
             } catch (Throwable error) {
                 LOG.debug("roster query failed: {}", error.toString());
+                backOff();
             } finally {
                 queryInFlight.set(false);
             }
         });
+        return true;
+    }
+
+    private void backOff() {
+        long delay = failureBackoffMs;
+        failureBackoffMs = Math.min(FAILURE_BACKOFF_MAX_MS, delay * 2L);
+        nextQueryAllowedMs = System.currentTimeMillis() + delay;
     }
 
     private void queryGraffiti(String serverKey, String dimension) {
-        pendingGraffitiQuery.set(new GraffitiQuery(serverKey, dimension));
+        if (System.currentTimeMillis() < nextGraffitiQueryAllowedMs) {
+            lastGraffitiQueryMs = 0L;
+            return;
+        }
+        pendingGraffitiQuery.set(new GraffitiQuery(serverKey, dimension, cacheEpoch.get()));
         startGraffitiQueryDrain();
     }
 
@@ -399,6 +508,7 @@ public final class CosmeticsSyncService {
                 while ((query = pendingGraffitiQuery.getAndSet(null)) != null) {
                     try {
                         GraffitiQuery currentQuery = query;
+                        lastGraffitiQueryMs = System.currentTimeMillis();
                         JsonObject body = new JsonObject();
                         body.addProperty("serverKey", currentQuery.serverKey());
                         body.addProperty("dimension", currentQuery.dimension());
@@ -416,14 +526,27 @@ public final class CosmeticsSyncService {
                         }
                         MinecraftClient client = MinecraftClient.getInstance();
                         if (client != null) client.execute(() -> {
+                            if (cacheEpoch.get() != currentQuery.epoch()
+                                    || !(currentQuery.serverKey() + '|' + currentQuery.dimension()).equals(graffitiContext)) return;
                             phazeGraffiti.entrySet().removeIf(entry ->
                                     entry.getValue().serverKey.equals(currentQuery.serverKey())
                                             && entry.getValue().dimension.equals(currentQuery.dimension()));
                             phazeGraffiti.putAll(next);
                         });
                         lastGraffitiQueryMs = System.currentTimeMillis();
+                    } catch (HttpStatusException error) {
+                        nextGraffitiQueryAllowedMs = System.currentTimeMillis()
+                                + (error.status == 429 ? RATE_LIMITED_BACKOFF_MS : FAILURE_BACKOFF_MIN_MS);
+                        lastGraffitiQueryMs = 0L;
+                        pendingGraffitiQuery.set(null);
+                        LOG.debug("shared graffiti query rejected: HTTP {}", error.status);
+                        break;
                     } catch (Throwable error) {
+                        nextGraffitiQueryAllowedMs = System.currentTimeMillis() + FAILURE_BACKOFF_MIN_MS;
+                        lastGraffitiQueryMs = 0L;
+                        pendingGraffitiQuery.set(null);
                         LOG.debug("shared graffiti query failed: {}", error.toString());
+                        break;
                     }
                 }
             } finally {
@@ -459,7 +582,7 @@ public final class CosmeticsSyncService {
             }
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) {
-                throw new IllegalStateException("HTTP " + status);
+                throw new HttpStatusException(status);
             }
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                     connection.getInputStream(), StandardCharsets.UTF_8))) {
@@ -469,6 +592,7 @@ public final class CosmeticsSyncService {
                 while ((count = reader.read(buffer)) >= 0) {
                     json.append(buffer, 0, count);
                 }
+                if (json.isEmpty()) return new JsonObject();
                 JsonElement parsed = JsonParser.parseString(json.toString());
                 return parsed.isJsonObject() ? parsed.getAsJsonObject() : new JsonObject();
             }
@@ -481,30 +605,55 @@ public final class CosmeticsSyncService {
         List<UUID> result = new ArrayList<>();
         for (AbstractClientPlayerEntity player : client.world.getPlayers()) {
             if (player == client.player) continue;
-            result.add(player.getUuid());
-            if (result.size() >= MAX_QUERY_PLAYERS) break;
+            UUID uuid = player.getUuid();
+            if (uuid.version() == 2) continue;
+            result.add(uuid);
         }
         result.sort(Comparator.comparing(UUID::toString));
         return result;
     }
 
-    private boolean isLoadedPlayer(UUID uuid) {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client == null || client.world == null) return false;
-        for (PlayerEntity player : client.world.getPlayers()) {
-            if (uuid.equals(player.getUuid())) return true;
+    private List<UUID> unconfirmed(List<UUID> loaded, long now) {
+        boolean live = PhazeEventService.getInstance().isConnected();
+        List<UUID> result = new ArrayList<>();
+        for (UUID uuid : loaded) {
+            Long confirmed = confirmedAt.get(uuid);
+            Long phazeConfirmed = phazeConfirmedAt.get(uuid);
+            if (confirmed == null || phazeConfirmed == null || (!live
+                    && (now - confirmed >= FALLBACK_REFRESH_MS || now - phazeConfirmed >= FALLBACK_REFRESH_MS))) {
+                result.add(uuid);
+            }
         }
-        return false;
+        return result;
+    }
+
+    private void trimCache(List<UUID> loaded) {
+        if (cachedPlayers.size() <= MAX_CACHED_PLAYERS) return;
+        Set<UUID> keep = new HashSet<>(loaded);
+        List<UUID> oldest = new ArrayList<>(cachedPlayers);
+        oldest.sort(Comparator.comparingLong(uuid -> Math.max(
+                confirmedAt.getOrDefault(uuid, 0L), phazeConfirmedAt.getOrDefault(uuid, 0L))));
+        int remaining = cachedPlayers.size();
+        for (UUID uuid : oldest) {
+            if (remaining <= MAX_CACHED_PLAYERS) break;
+            if (keep.size() <= MAX_CACHED_PLAYERS && keep.contains(uuid)) continue;
+            confirmedAt.remove(uuid);
+            phazeConfirmedAt.remove(uuid);
+            states.remove(uuid);
+            phazeStates.remove(uuid);
+            cachedPlayers.remove(uuid);
+            remaining--;
+        }
     }
 
     private void putIfNewer(UUID uuid, RemoteCosmetic next) {
-        if (states.size() > 512) states.clear();
+        cachedPlayers.add(uuid);
         states.compute(uuid, (ignored, current) ->
                 current == null || next.updatedAt >= current.updatedAt ? next : current);
     }
 
     private void putPhazeIfNewer(UUID uuid, PhazeRemoteCosmetic next) {
-        if (phazeStates.size() > 512) phazeStates.clear();
+        cachedPlayers.add(uuid);
         phazeStates.compute(uuid, (ignored, current) ->
                 current == null || next.updatedAt >= current.updatedAt ? next : current);
     }
@@ -516,7 +665,7 @@ public final class CosmeticsSyncService {
             try { ids[i] = Integer.parseInt(slots[i]); }
             catch (NumberFormatException ignored) { }
         }
-        return new PhazeRemoteCosmetic(ids, equipped, updatedAt);
+        return new PhazeRemoteCosmetic(ids, equipped, updatedAt, System.currentTimeMillis());
     }
 
     private static RemoteCosmetic decode(String value, boolean equipped, long updatedAt) {
@@ -533,7 +682,8 @@ public final class CosmeticsSyncService {
                     hat.isBlank() ? CosmeticsState.NONE : hat,
                     pet.isBlank() ? CosmeticsState.NONE : pet,
                     equipped,
-                    updatedAt
+                    updatedAt,
+                    System.currentTimeMillis()
             );
         }
 
@@ -544,7 +694,8 @@ public final class CosmeticsSyncService {
                 CosmeticsState.NONE,
                 CosmeticsState.NONE,
                 equipped,
-                updatedAt
+                updatedAt,
+                System.currentTimeMillis()
         );
     }
 
@@ -554,11 +705,12 @@ public final class CosmeticsSyncService {
             String hat,
             String pet,
             boolean equipped,
-            long updatedAt
+            long updatedAt,
+            long receivedAt
     ) {
     }
 
-    private record PhazeRemoteCosmetic(int[] ids, boolean equipped, long updatedAt) {
+    private record PhazeRemoteCosmetic(int[] ids, boolean equipped, long updatedAt, long receivedAt) {
         int id(vorga.phazeclient.implement.cosmetics.bridge.CosmeticCategory category) {
             int index = switch (category) {
                 case WINGS -> 0;
@@ -572,7 +724,16 @@ public final class CosmeticsSyncService {
         }
     }
 
-    private record GraffitiQuery(String serverKey, String dimension) { }
+    private record GraffitiQuery(String serverKey, String dimension, int epoch) { }
+
+    private static final class HttpStatusException extends Exception {
+        final int status;
+
+        HttpStatusException(int status) {
+            super("HTTP " + status, null, false, false);
+            this.status = status;
+        }
+    }
 
     public record PhazeGraffiti(
             String serverKey,

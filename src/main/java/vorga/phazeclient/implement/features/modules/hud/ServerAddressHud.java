@@ -35,7 +35,7 @@ public final class ServerAddressHud extends RectHudModule {
     private ServerAddressHud() {
         super("server_address_hud", "Server Address", 100.0f, 50.0f, 1.0f);
         displayServerIcon.setFullWidth(true);
-        setup(displayServerIcon, otherSection, cornerRounding);
+        setup(displayServerIcon);
     }
 
     public String getServerAddress() {

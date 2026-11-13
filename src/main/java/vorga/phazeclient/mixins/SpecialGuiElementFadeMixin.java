@@ -30,12 +30,9 @@ public abstract class SpecialGuiElementFadeMixin {
         if (selection == null) return;
         long now = System.nanoTime();
         float yaw = marker.phaze$previewYaw();
-        boolean same = selection.equals(phaze$lastPreviewSelection);
-        boolean rotating = !Float.isNaN(phaze$lastPreviewYaw)
-                && Math.abs(yaw - phaze$lastPreviewYaw) > 0.001F;
-
-        long interval = rotating ? 8_333_333L : 33_333_334L;
-        if (same && now - phaze$lastPreviewRenderNanos < interval) {
+        boolean same = selection.equals(phaze$lastPreviewSelection)
+                && Float.floatToIntBits(yaw) == Float.floatToIntBits(phaze$lastPreviewYaw);
+        if (same && now - phaze$lastPreviewRenderNanos < 1_000_000_000L / 60L) {
             cir.setReturnValue(true);
             return;
         }

@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.util.Util;
 import vorga.phazeclient.base.util.Lang;
 
 import java.io.InputStream;
@@ -27,6 +28,7 @@ public final class CosmeticsState {
     public static final String GOLDFISH_PET = "Goldfish Pet";
     public static final String BIRB_COMPANION = "Birb";
     public static final String TURTLE_HAT = "Turtle Pet";
+    public static final String PHAZE_CROWN_HAT = "Phaze Crown Hat";
     private static final List<BundledCape> BUNDLED_CAPES = List.of(
             new BundledCape("Phaze Cape.png", "/assets/phaze/textures/cosmetics/phaze_cape.png"),
             new BundledCape("награда 15 лет+вишня.png", "/assets/phaze/cosmetics/capes/anniversary_cherry.png"),
@@ -67,21 +69,25 @@ public final class CosmeticsState {
             new BundledCape("Магма.gif", "/assets/phaze/cosmetics/capes/magma.gif")
     );
 
-    private static final CosmeticsState INSTANCE = new CosmeticsState();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final CosmeticsState INSTANCE = new CosmeticsState();
 
     private String selectedWing = WIMGS;
     private String selectedCape = NONE;
-    private String selectedHat = NONE;
+    private String selectedHat = PHAZE_CROWN_HAT;
     private String selectedPet = NONE;
     private boolean wingEquipped = true;
     private boolean capeEquipped;
-    private boolean hatEquipped;
+    private boolean hatEquipped = true;
+    private boolean crownAutoEquipped;
     private boolean petEquipped;
     private boolean hideElytra = true;
     private float wingMotion = 5.5F;
     private float petFollowIntensity = 0.75F;
     private List<CosmeticEntry> catalog = List.of();
+    private static final long FILE_EXISTS_RECHECK_MS = 1000L;
+    private final java.util.Map<Path, Boolean> fileExists = new java.util.HashMap<>();
+    private long fileExistsCheckedMs = Long.MIN_VALUE / 2;
 
     private CosmeticsState() {
         installBundledModels();
@@ -245,6 +251,7 @@ public final class CosmeticsState {
                 .comparingInt((CosmeticEntry entry) -> catalogPriority(entry.name()))
                 .thenComparing(CosmeticEntry::name, String.CASE_INSENSITIVE_ORDER));
         catalog = List.copyOf(discovered);
+        fileExists.clear();
     }
 
     public synchronized Path resolveModelPath(String cosmetic) {
@@ -255,11 +262,20 @@ public final class CosmeticsState {
     public synchronized CosmeticEntry resolveEntry(String cosmetic) {
         if (cosmetic == null) return null;
         for (CosmeticEntry entry : catalog) {
-            if (entry.name().equalsIgnoreCase(cosmetic) && Files.isRegularFile(entry.file())) {
+            if (entry.name().equalsIgnoreCase(cosmetic) && fileExists(entry.file())) {
                 return entry;
             }
         }
         return null;
+    }
+
+    private boolean fileExists(Path file) {
+        long now = Util.getMeasuringTimeMs();
+        if (now - fileExistsCheckedMs >= FILE_EXISTS_RECHECK_MS) {
+            fileExists.clear();
+            fileExistsCheckedMs = now;
+        }
+        return fileExists.computeIfAbsent(file, Files::isRegularFile);
     }
 
     public Path cosmeticsDirectory() {
@@ -291,15 +307,18 @@ public final class CosmeticsState {
                 "Turtle Pet.zip",
                 "Maple Witch Hat.bbmodel",
                 "Hat Kid Collection.bbmodel",
-                "Violet Witch Hat.bbmodel"
+                "Violet Witch Hat.bbmodel",
+                "Phaze Crown Hat.bbmodel"
         )) {
             Path target = directory.resolve(fileName);
-            if (Files.isRegularFile(target)) continue;
+            boolean refreshBundledCrown = (PHAZE_CROWN_HAT + ".bbmodel").equalsIgnoreCase(fileName);
+            if (Files.isRegularFile(target) && !refreshBundledCrown) continue;
             String resource = "/assets/phaze/cosmetics/models/" + fileName;
             try (InputStream input = CosmeticsState.class.getResourceAsStream(resource)) {
                 if (input == null) continue;
                 Files.createDirectories(directory);
-                Files.copy(input, target);
+                if (refreshBundledCrown) Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
+                else Files.copy(input, target);
             } catch (Throwable ignored) {
 
             }
@@ -330,8 +349,12 @@ public final class CosmeticsState {
     private synchronized void load() {
         try {
             Path file = settingsFile();
-            if (!Files.isRegularFile(file)) return;
+            if (!Files.isRegularFile(file)) {
+                crownAutoEquipped = true;
+                return;
+            }
             JsonObject object = JsonParser.parseString(Files.readString(file, StandardCharsets.UTF_8)).getAsJsonObject();
+            crownAutoEquipped = object.has("crownAutoEquipped") && object.get("crownAutoEquipped").getAsBoolean();
             if (object.has("selectedWing") || object.has("selectedCape")) {
                 selectedWing = object.has("selectedWing") ? object.get("selectedWing").getAsString() : WIMGS;
                 selectedCape = object.has("selectedCape") ? object.get("selectedCape").getAsString() : NONE;
@@ -369,6 +392,12 @@ public final class CosmeticsState {
                 selectedPet = NONE;
                 petEquipped = false;
             }
+            if (!crownAutoEquipped) {
+                selectedHat = PHAZE_CROWN_HAT;
+                hatEquipped = true;
+                crownAutoEquipped = true;
+                save();
+            }
         } catch (Throwable ignored) {
 
         }
@@ -386,6 +415,7 @@ public final class CosmeticsState {
             object.addProperty("wingEquipped", wingEquipped);
             object.addProperty("capeEquipped", capeEquipped);
             object.addProperty("hatEquipped", hatEquipped);
+            object.addProperty("crownAutoEquipped", crownAutoEquipped);
             object.addProperty("petEquipped", petEquipped);
             object.addProperty("hideElytra", hideElytra);
             object.addProperty("wingMotion", wingMotion);
@@ -524,7 +554,8 @@ public final class CosmeticsState {
         }
         if (lower.contains("turtle pet")
                 || lower.contains("witch hat")
-                || lower.contains("hat kid collection")) {
+                || lower.contains("hat kid collection")
+                || lower.contains("crown")) {
             return CosmeticType.HAT;
         }
         return CosmeticType.WING;
@@ -562,6 +593,7 @@ public final class CosmeticsState {
                 case "turtle pet" -> "Turtle Hat";
                 case "maple witch hat" -> "Maple Witch Hat";
                 case "violet witch hat" -> "Violet Witch Hat";
+                case "phaze crown hat" -> "Phaze Crown";
                 case "hat kid · kid's hat" -> "Kid's Hat";
                 case "hat kid · sprint hat" -> "Sprint Hat";
                 case "hat kid · brewing hat" -> "Brewing Hat";
@@ -614,6 +646,7 @@ public final class CosmeticsState {
             case "turtle pet" -> "Черепашка";
             case "maple witch hat" -> "Шляпа ведьмы Мэйпл";
             case "violet witch hat" -> "Фиолетовая шляпа ведьмы";
+            case "phaze crown hat" -> "Корона Phaze";
             case "hat kid · kid's hat" -> "Шляпа Хэт Кид";
             case "hat kid · sprint hat" -> "Спринтерская шляпа";
             case "hat kid · brewing hat" -> "Зельеварская шляпа";
@@ -697,6 +730,7 @@ public final class CosmeticsState {
                 case "turtle pet" -> "Панцирь с характером";
                 case "maple witch hat" -> "Тёплая осенняя магия";
                 case "violet witch hat" -> "Колдовство фиолетовой ночи";
+                case "phaze crown hat" -> "Фирменная корона Phaze";
                 case "hat kid · kid's hat" -> "Для маленьких приключений";
                 case "hat kid · sprint hat" -> "Ветер всегда будет позади";
                 case "hat kid · brewing hat" -> "Идеальна для странных зелий";
@@ -754,6 +788,7 @@ public final class CosmeticsState {
             case "turtle pet" -> "A shell with extra attitude";
             case "maple witch hat" -> "Warm magic of the autumn woods";
             case "violet witch hat" -> "Witchcraft of the violet night";
+            case "phaze crown hat" -> "The signature crown of Phaze";
             case "hat kid · kid's hat" -> "Made for little adventures";
             case "hat kid · sprint hat" -> "Keep the wind behind you";
             case "hat kid · brewing hat" -> "Perfect for unusual potions";

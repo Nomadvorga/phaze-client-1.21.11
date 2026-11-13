@@ -91,7 +91,7 @@ accessible class net/minecraft/client/gl/ShaderLoader$Cache
 # RenderLayer.of has the single signature below. It is still
 # package-private, so it stays widened.
 #
-# Used by BatchedRectangle for the phaze:core/round_batched layer, and by
+# Used by BatchedRectangle for the phaze:core/gui_batched layer, and by
 # HitRangeCircleRenderer (port of uku3lig/hitrange) for its circle layers.
 accessible method net/minecraft/client/render/RenderLayer of (Ljava/lang/String;Lnet/minecraft/client/render/RenderSetup;)Lnet/minecraft/client/render/RenderLayer;
 

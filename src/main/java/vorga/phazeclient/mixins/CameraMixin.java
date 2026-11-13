@@ -11,12 +11,14 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.ModifyArgs;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.invoke.arg.Args;
 import vorga.phazeclient.implement.features.modules.other.Animations;
 import vorga.phazeclient.implement.features.modules.other.FreeLook;
 import vorga.phazeclient.implement.features.modules.other.NoFluid;
+import vorga.phazeclient.implement.features.modules.other.OldAnimations;
 import vorga.phazeclient.implement.features.modules.other.SmoothCamera;
 
 @Mixin(Camera.class)
@@ -163,5 +165,24 @@ public abstract class CameraMixin {
         } else if (type == CameraSubmersionType.LAVA && mod.shouldHideLava()) {
             cir.setReturnValue(CameraSubmersionType.NONE);
         }
+    }
+
+    /** 1.7 sneak: updateEyeHeight interpolates toward 1.54 instead of the modern standing eye height. */
+    @Redirect(
+            method = "updateEyeHeight",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/entity/Entity;getStandingEyeHeight()F"
+            ),
+            require = 1
+    )
+    private float phaze$oldSneakEyeHeight(Entity entity) {
+        OldAnimations oldAnim = OldAnimations.getInstance();
+        if (oldAnim != null && oldAnim.isEnabled() && oldAnim.oldSneak.isValue()) {
+            if (entity.isInSneakingPose() || entity.isSneaking()) {
+                return 1.54F;
+            }
+        }
+        return entity.getStandingEyeHeight();
     }
 }

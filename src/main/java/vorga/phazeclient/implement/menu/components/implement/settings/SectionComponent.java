@@ -1,13 +1,9 @@
 package vorga.phazeclient.implement.menu.components.implement.settings;
 
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.util.math.MatrixStack;
 import vorga.phazeclient.api.feature.module.setting.implement.SectionSetting;
-import vorga.phazeclient.api.system.font.Fonts;
-import vorga.phazeclient.base.util.render.GuiMatrix;
+import vorga.phazeclient.api.system.font.msdf.MsdfFonts;
 import vorga.phazeclient.implement.menu.MenuStyle;
-
-import static vorga.phazeclient.api.system.font.Fonts.Type.INTER_BOLD;
 
 public class SectionComponent extends AbstractSettingComponent {
     private final SectionSetting setting;
@@ -22,15 +18,14 @@ public class SectionComponent extends AbstractSettingComponent {
         updateVisibilityAnimation();
         height = 12;
 
-        var font = Fonts.getSize(11, INTER_BOLD);
-        String text = setting.getLocalizedName().toUpperCase();
-        float textWidth = font.getStringWidth(text);
-        float centerX = x + (width - textWidth) / 2.0f;
+        float fontSize = 5.5F;
+        String text = label.singleLine(setting.getLocalizedName().toUpperCase(java.util.Locale.ROOT));
+        float textWidth = MsdfFonts.bold().getWidth(text, fontSize);
+        float centerX = x + Math.max(0.0F, (width - textWidth) / 2.0f);
         int color = MenuStyle.withAlpha(MenuStyle.TEXT_MUTED, currentAlpha * 0.7f);
-
-        MatrixStack textPose = new MatrixStack();
-        textPose.multiplyPositionMatrix(GuiMatrix.mat4(context.getMatrices()));
-        font.drawString(textPose, text, centerX, y + 4, color);
+        label.renderMsdf(context.getMatrices(), text, fontSize, centerX, y + 3.25F,
+                x + width, y, height, color);
+        updateLabelHover(mouseX, mouseY);
     }
 
     @Override

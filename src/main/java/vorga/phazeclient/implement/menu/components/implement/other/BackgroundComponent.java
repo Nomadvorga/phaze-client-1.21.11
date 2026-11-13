@@ -17,7 +17,6 @@ import net.minecraft.client.render.VertexFormats;
 import net.minecraft.util.Identifier;
 import org.joml.Matrix4f;
 import org.lwjgl.glfw.GLFW;
-import vorga.phazeclient.api.feature.module.ModuleCategory;
 import vorga.phazeclient.api.system.animation.Animation;
 import vorga.phazeclient.api.system.animation.Direction;
 import vorga.phazeclient.api.system.animation.implement.DecelerateAnimation;
@@ -28,9 +27,11 @@ import vorga.phazeclient.base.util.Lang;
 import vorga.phazeclient.base.util.math.MathUtil;
 import vorga.phazeclient.implement.features.modules.client.Theme;
 import vorga.phazeclient.implement.menu.MenuScreen;
+import vorga.phazeclient.implement.menu.MenuLayout;
 import vorga.phazeclient.implement.menu.MenuStyle;
 import vorga.phazeclient.implement.menu.UiMsdfIconAtlas;
 import vorga.phazeclient.implement.menu.components.AbstractComponent;
+import vorga.phazeclient.implement.menu.components.implement.settings.SettingLabel;
 import vorga.phazeclient.implement.config.ConfigManager;
 import vorga.phazeclient.core.Main;
 
@@ -47,13 +48,13 @@ public class BackgroundComponent extends AbstractComponent {
     private static final float TOP_TAB_HEIGHT = 17.0F;
     private static final float TOP_TAB_GAP = 8.0F;
     private static final float TOP_TAB_HORIZONTAL_PADDING = 19.0F;
-    private static final float SIDEBAR_WIDTH = 100f;
+    private static final float SIDEBAR_WIDTH = MenuLayout.SIDEBAR_WIDTH;
     private static final float CONFIG_ROW_HEIGHT = 17.5F;
     private static final float CONFIG_ROW_GAP = 1.0F;
     private static final float CONFIG_DELETE_WIDTH = 19.5F;
     private static final float CONFIG_DELETE_ICON_SIZE = 5.4F;
     private static final float CONFIG_TEXT_PADDING = 6.0F;
-    private static final float CONFIG_LIST_PADDING = 1.5F;
+    private static final float CONFIG_SCROLL_STEP = 22.0F;
     private static final float FOOTER_BUTTON_HEIGHT = 15.0F;
     private static final float FOOTER_BUTTON_GAP = 14.0F;
 
@@ -62,6 +63,7 @@ public class BackgroundComponent extends AbstractComponent {
     private final Animation editHudHoverAnimation = new DecelerateAnimation().setMs(180).setValue(1);
     private final Map<String, Animation> configHoverAnimations = new HashMap<>();
     private final Map<String, Animation> configDeleteHoverAnimations = new HashMap<>();
+    private final Map<String, SettingLabel> configLabels = new HashMap<>();
     private final Map<String, Animation> topTabHoverAnimations = new HashMap<>();
     private SearchComponent searchComponent;
 
@@ -69,6 +71,8 @@ public class BackgroundComponent extends AbstractComponent {
     private String editingText = "";
     private long lastClickTime = 0;
     private String lastClickedConfig = null;
+    private double configScroll;
+    private double smoothedConfigScroll;
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
@@ -78,7 +82,7 @@ public class BackgroundComponent extends AbstractComponent {
 
         boolean configsOpen = MenuScreen.INSTANCE.isConfigsViewOpen();
         boolean cosmeticsOpen = MenuScreen.INSTANCE.isCosmeticsViewOpen();
-        boolean fullWidth = configsOpen || cosmeticsOpen;
+        boolean fullWidth = configsOpen || cosmeticsOpen || MenuScreen.INSTANCE.isMessengerViewOpen();
 
         rectangle.render(ShapeProperties.create(matrix, x, y, width, height)
                 .round(8).softness(1).thickness(2)
@@ -104,7 +108,7 @@ public class BackgroundComponent extends AbstractComponent {
         } else {
 
             rectangle.render(ShapeProperties.create(matrix, x + 1.0F, y + HEADER_HEIGHT + 1.0F, width - 2.0F, height - HEADER_HEIGHT - 2.0F)
-                    .round(0, 0, 7, 7).color(applyGlobalAlpha(MenuStyle.PANEL_CONTENT)).build());
+                    .round(0, 7, 0, 7).color(applyGlobalAlpha(MenuStyle.PANEL_CONTENT)).build());
         }
         rectangle.render(ShapeProperties.create(matrix, x + 1.0F, y + HEADER_HEIGHT, width - 2.0F, 1.0F)
                 .color(applyGlobalAlpha(MenuStyle.BORDER)).build());
@@ -117,12 +121,13 @@ public class BackgroundComponent extends AbstractComponent {
     }
 
     private void renderHeader(DrawContext context, int mouseX, int mouseY) {
-        String[] labels = {"MODS", "SETTINGS", "COSMETICS", "CONFIGS"};
+        String[] labels = {"MODS", "SETTINGS", "COSMETICS", "CONFIGS", "CHAT"};
         boolean settingsActive = isSettingsTabActive();
         boolean cosmeticsActive = isCosmeticsTabActive();
         boolean configsActive = isConfigsTabActive();
-        boolean modsActive = !settingsActive && !cosmeticsActive && !configsActive;
-        boolean[] active = {modsActive, settingsActive, cosmeticsActive, configsActive};
+        boolean messengerActive = MenuScreen.INSTANCE.isMessengerViewOpen();
+        boolean modsActive = !settingsActive && !cosmeticsActive && !configsActive && !messengerActive;
+        boolean[] active = {modsActive, settingsActive, cosmeticsActive, configsActive, messengerActive};
         float totalTabsWidth = 0.0F;
         for (int i = 0; i < labels.length; i++) {
             totalTabsWidth += getTopTabWidth(labels[i]);
@@ -154,6 +159,7 @@ public class BackgroundComponent extends AbstractComponent {
         float tabWidth = getTopTabWidth(label);
         float tabY = y + (HEADER_HEIGHT - TOP_TAB_HEIGHT) / 2.0F;
         boolean hovered = MathUtil.isHovered(mouseX, mouseY, tabX, tabY, tabWidth, TOP_TAB_HEIGHT);
+        if (hovered) vorga.phazeclient.api.system.cursor.CursorManager.requestHand();
         Animation hoverAnimation = topTabHoverAnimations.computeIfAbsent(label, ignored -> new DecelerateAnimation().setMs(180).setValue(1));
         hoverAnimation.setDirection(hovered ? Direction.FORWARDS : Direction.BACKWARDS);
 
@@ -223,35 +229,34 @@ public class BackgroundComponent extends AbstractComponent {
         String[] configs = configManager.getConfigList();
         float rowX = configRowX();
         float rowWidth = configRowWidth();
-        float rowY = configRowStartY();
-        int visibleConfigCount = 0;
-
-        for (int i = 0; i < configs.length; i++) {
-            float currentRowY = rowY + i * (CONFIG_ROW_HEIGHT + CONFIG_ROW_GAP);
-            if (currentRowY + CONFIG_ROW_HEIGHT > footerStartY() - 4.0F) {
-                break;
-            }
-            visibleConfigCount++;
-        }
-
-        if (visibleConfigCount > 0) {
-            float listHeight = visibleConfigCount * CONFIG_ROW_HEIGHT + (visibleConfigCount - 1) * CONFIG_ROW_GAP + CONFIG_LIST_PADDING * 2.0F;
-            rectangle.render(ShapeProperties.create(matrix, rowX - CONFIG_LIST_PADDING, rowY - CONFIG_LIST_PADDING, rowWidth + CONFIG_LIST_PADDING * 2.0F, listHeight)
-                    .round(1.8F)
-                    .thickness(1.15F)
-                    .outlineColor(MenuStyle.withAlpha(MenuStyle.BORDER_LIGHT, applyGlobalAlpha(0.62F)))
-                    .color(MenuStyle.withAlpha(MenuStyle.PANEL_BG, applyGlobalAlpha(0.08F)))
-                    .build());
+        float viewportY = configViewportY();
+        float viewportHeight = configViewportHeight();
+        double maxScroll = Math.max(0.0F, configContentHeight(configs.length) - viewportHeight);
+        configScroll = Math.max(-maxScroll, Math.min(0.0D, configScroll));
+        if (maxScroll <= 0.01D) {
+            configScroll = 0.0D;
+            smoothedConfigScroll = 0.0D;
+        } else {
+            smoothedConfigScroll = MathUtil.interpolateSmooth(3.5D, smoothedConfigScroll, configScroll);
+            smoothedConfigScroll = Math.max(-maxScroll, Math.min(0.0D, smoothedConfigScroll));
+            if (Math.abs(smoothedConfigScroll - configScroll) < 0.01D) smoothedConfigScroll = configScroll;
         }
 
         String currentConfig = configManager.getCurrentConfigName();
-        for (String config : configs) {
-            if (rowY + CONFIG_ROW_HEIGHT > footerStartY() - 4.0F) {
-                break;
+        var scissor = Main.getInstance().getScissorManager();
+        scissor.push(GuiMatrix.mat4(matrix), rowX, viewportY, rowWidth, viewportHeight);
+        try {
+        for (int i = 0; i < configs.length; i++) {
+            String config = configs[i];
+            float rowY = viewportY + i * (CONFIG_ROW_HEIGHT + CONFIG_ROW_GAP) + (float) smoothedConfigScroll;
+            if (rowY + CONFIG_ROW_HEIGHT < viewportY - 1.0F || rowY > viewportY + viewportHeight + 1.0F) {
+                continue;
             }
 
-            boolean rowHovered = MathUtil.isHovered(mouseX, mouseY, rowX, rowY, rowWidth, CONFIG_ROW_HEIGHT);
-            boolean deleteHovered = isDeleteHovered(mouseX, mouseY, rowY);
+            boolean inViewport = mouseY >= viewportY && mouseY < viewportY + viewportHeight;
+            boolean rowHovered = inViewport && MathUtil.isHovered(mouseX, mouseY, rowX, rowY, rowWidth, CONFIG_ROW_HEIGHT);
+            boolean deleteHovered = inViewport && isDeleteHovered(mouseX, mouseY, rowY);
+            if (rowHovered) vorga.phazeclient.api.system.cursor.CursorManager.requestHand();
             boolean active = config.equalsIgnoreCase(currentConfig);
             Animation rowHoverAnimation = configHoverAnimation(config);
             Animation deleteHoverAnimation = configDeleteHoverAnimation(config);
@@ -271,16 +276,12 @@ public class BackgroundComponent extends AbstractComponent {
             rectangle.render(ShapeProperties.create(matrix, rowX, rowY, rowWidth, CONFIG_ROW_HEIGHT)
                     .round(1.5F).thickness(2.0F).outlineColor(applyGlobalAlpha(outlineColor)).color(applyGlobalAlpha(rowColor)).build());
 
-            MsdfRenderer.renderText(
-                    MsdfFonts.bold(),
-                    config,
-                    CONFIG_TEXT_SIZE,
-                    applyGlobalAlpha(MenuStyle.TEXT_PRIMARY),
-                    GuiMatrix.mat4(context.getMatrices()),
-                    rowX + CONFIG_TEXT_PADDING,
+            float labelRight = deleteSectionX(rowX, rowWidth) + (CONFIG_DELETE_WIDTH - CONFIG_DELETE_ICON_SIZE) / 2.0F - 3.0F;
+            SettingLabel configLabel = configLabels.computeIfAbsent(config, ignored -> new SettingLabel());
+            configLabel.updateHover(rowHovered);
+            configLabel.renderMsdf(matrix, config, CONFIG_TEXT_SIZE, rowX + CONFIG_TEXT_PADDING,
                     MenuStyle.centerMsdfTextY(CONFIG_TEXT_SIZE, rowY, CONFIG_ROW_HEIGHT),
-                    0.0F
-            );
+                    labelRight, rowY, CONFIG_ROW_HEIGHT, applyGlobalAlpha(MenuStyle.TEXT_PRIMARY));
 
             {
                 float iconSize = CONFIG_DELETE_ICON_SIZE;
@@ -307,7 +308,9 @@ public class BackgroundComponent extends AbstractComponent {
                 );
             }
 
-            rowY += CONFIG_ROW_HEIGHT + CONFIG_ROW_GAP;
+        }
+        } finally {
+            scissor.pop();
         }
     }
 
@@ -370,7 +373,7 @@ public class BackgroundComponent extends AbstractComponent {
             return true;
         }
 
-        if (MenuScreen.INSTANCE.isConfigsViewOpen() || MenuScreen.INSTANCE.isCosmeticsViewOpen()) {
+        if (isFullWidthPage()) {
             return false;
         }
 
@@ -398,11 +401,15 @@ public class BackgroundComponent extends AbstractComponent {
 
         float rowX = configRowX();
         float rowWidth = configRowWidth();
-        float rowY = configRowStartY();
+        float viewportY = configViewportY();
+        float viewportBottom = viewportY + configViewportHeight();
+        if (mouseY < viewportY || mouseY >= viewportBottom) return false;
         String[] configs = configManager.getConfigList();
-        for (String config : configs) {
-            if (rowY + CONFIG_ROW_HEIGHT > footerStartY() - 4.0F) {
-                break;
+        for (int i = 0; i < configs.length; i++) {
+            String config = configs[i];
+            float rowY = viewportY + i * (CONFIG_ROW_HEIGHT + CONFIG_ROW_GAP) + (float) smoothedConfigScroll;
+            if (rowY + CONFIG_ROW_HEIGHT < viewportY || rowY > viewportBottom) {
+                continue;
             }
 
             if (isDeleteHovered(mouseX, mouseY, rowY)) {
@@ -440,7 +447,6 @@ public class BackgroundComponent extends AbstractComponent {
                 return true;
             }
 
-            rowY += CONFIG_ROW_HEIGHT + CONFIG_ROW_GAP;
         }
 
         if (editingConfigName != null) {
@@ -494,6 +500,7 @@ public class BackgroundComponent extends AbstractComponent {
         if (isTopTabHovered(mouseX, mouseY)) {
             return true;
         }
+        if (isFullWidthPage()) return false;
 
         float footerX = x + 4.0F;
         float footerWidth = SIDEBAR_WIDTH - 8.0F;
@@ -511,18 +518,20 @@ public class BackgroundComponent extends AbstractComponent {
 
         float rowX = configRowX();
         float rowWidth = configRowWidth();
-        float rowY = configRowStartY();
+        float viewportY = configViewportY();
+        float viewportBottom = viewportY + configViewportHeight();
+        if (mouseY < viewportY || mouseY >= viewportBottom) return false;
         String[] configs = configManager.getConfigList();
-        for (String ignored : configs) {
-            if (rowY + CONFIG_ROW_HEIGHT > footerStartY() - 4.0F) {
-                break;
+        for (int i = 0; i < configs.length; i++) {
+            float rowY = viewportY + i * (CONFIG_ROW_HEIGHT + CONFIG_ROW_GAP) + (float) smoothedConfigScroll;
+            if (rowY + CONFIG_ROW_HEIGHT < viewportY || rowY > viewportBottom) {
+                continue;
             }
 
             if (MathUtil.isHovered(mouseX, mouseY, rowX, rowY, rowWidth, CONFIG_ROW_HEIGHT) || isDeleteHovered(mouseX, mouseY, rowY)) {
                 return true;
             }
 
-            rowY += CONFIG_ROW_HEIGHT + CONFIG_ROW_GAP;
         }
 
         return false;
@@ -533,11 +542,32 @@ public class BackgroundComponent extends AbstractComponent {
     }
 
     private float configRowX() {
-        return x + 4.0F;
+        return x + 5.0F;
     }
 
     private float configRowStartY() {
-        return y + HEADER_HEIGHT + 7.0F;
+        return y + HEADER_HEIGHT + 8.5F;
+    }
+
+    private float configViewportY() { return configRowStartY(); }
+
+    private float configViewportHeight() {
+        float newConfigY = footerStartY() - 5.0F - FOOTER_BUTTON_HEIGHT - 4.0F;
+        return Math.max(0.0F, newConfigY - 4.0F - configViewportY());
+    }
+
+    private static float configContentHeight(int configCount) {
+        return configCount <= 0 ? 0.0F : configCount * CONFIG_ROW_HEIGHT + (configCount - 1) * CONFIG_ROW_GAP;
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
+        if (isFullWidthPage()
+                || !MathUtil.isHovered(mouseX, mouseY, x, configViewportY(), SIDEBAR_WIDTH, configViewportHeight())) return false;
+        double maxScroll = Math.max(0.0F, configContentHeight(configManager.getConfigList().length) - configViewportHeight());
+        if (maxScroll <= 0.01D) return false;
+        configScroll = Math.max(-maxScroll, Math.min(0.0D, configScroll + amount * CONFIG_SCROLL_STEP));
+        return true;
     }
 
     private float configRowWidth() {
@@ -564,7 +594,7 @@ public class BackgroundComponent extends AbstractComponent {
     }
 
     private boolean handleTopTabClick(double mouseX, double mouseY) {
-        String[] labels = {"MODS", "SETTINGS", "COSMETICS", "CONFIGS"};
+        String[] labels = {"MODS", "SETTINGS", "COSMETICS", "CONFIGS", "CHAT"};
         boolean configsActive = isConfigsTabActive();
         float totalTabsWidth = 0.0F;
         for (int i = 0; i < labels.length; i++) {
@@ -584,18 +614,7 @@ public class BackgroundComponent extends AbstractComponent {
             float tabWidth = getTopTabWidth(label);
             if (MathUtil.isHovered(mouseX, mouseY, tabsX, tabY, tabWidth, TOP_TAB_HEIGHT)) {
                 playButtonClickSound();
-                if ("SETTINGS".equals(label)) {
-                    MenuScreen.INSTANCE.openModuleDetail(Theme.getInstance());
-                } else if ("COSMETICS".equals(label)) {
-                    MenuScreen.INSTANCE.openCosmeticsView();
-                } else if ("CONFIGS".equals(label)) {
-                    MenuScreen.INSTANCE.openConfigsView();
-                } else {
-                    MenuScreen.INSTANCE.closeModuleDetail();
-                    MenuScreen.INSTANCE.closeConfigsView();
-                    MenuScreen.INSTANCE.closeCosmeticsView();
-                    MenuScreen.INSTANCE.setCategory(ModuleCategory.ALL);
-                }
+                MenuScreen.INSTANCE.requestTopTab(label);
                 return true;
             }
             tabsX += tabWidth + TOP_TAB_GAP;
@@ -611,7 +630,7 @@ public class BackgroundComponent extends AbstractComponent {
     }
 
     private boolean isTopTabHovered(double mouseX, double mouseY) {
-        String[] labels = {"MODS", "SETTINGS", "COSMETICS", "CONFIGS"};
+        String[] labels = {"MODS", "SETTINGS", "COSMETICS", "CONFIGS", "CHAT"};
         boolean configsActive = isConfigsTabActive();
         float totalTabsWidth = 0.0F;
         for (int i = 0; i < labels.length; i++) {
@@ -713,7 +732,12 @@ public class BackgroundComponent extends AbstractComponent {
         return MenuScreen.INSTANCE.isCosmeticsViewOpen();
     }
 
-    private static String topTabText(String label) {
-        return Lang.t("menu.tab." + label.toLowerCase(java.util.Locale.ROOT));
+    private static boolean isFullWidthPage() {
+        return MenuScreen.INSTANCE.isConfigsViewOpen() || MenuScreen.INSTANCE.isCosmeticsViewOpen()
+                || MenuScreen.INSTANCE.isMessengerViewOpen();
+    }
+
+    private static String topTabText(String id) {
+        return id;
     }
 }

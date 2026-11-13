@@ -7,6 +7,8 @@ public interface ChatAnimationFrameAccess {
 
     boolean phaze$shouldShiftChatLine(ChatHudLine.Visible line);
 
+    boolean phaze$isLatestChatLine(ChatHudLine.Visible line);
+
     float phaze$getChatFrameDx();
 
     float phaze$getChatFrameDy();

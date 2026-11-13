@@ -23,7 +23,7 @@ public class ResetIconComponent implements QuickImports {
     private float x, y;
     private float alpha = 1.0f;
     private boolean isModified = false;
-    private final Animation visibilityAnimation = new DecelerateAnimation().setMs(140).setValue(1);
+    private final Animation visibilityAnimation = new DecelerateAnimation().setMs(SettingLabelState.WIDTH_TRANSITION_MS).setValue(1);
 
     private boolean visibilitySeeded = false;
 

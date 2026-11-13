@@ -19,6 +19,7 @@ import vorga.phazeclient.api.system.font.msdf.MsdfFonts;
 import vorga.phazeclient.api.system.font.msdf.MsdfRenderer;
 import vorga.phazeclient.api.system.shape.ShapeProperties;
 import vorga.phazeclient.api.system.shape.batched.BatchedRectangle;
+import vorga.phazeclient.api.system.shape.batched.GuiClipState;
 import vorga.phazeclient.base.util.Lang;
 import vorga.phazeclient.base.util.render.GuiMatrix;
 import vorga.phazeclient.base.util.math.MathUtil;
@@ -53,6 +54,10 @@ public final class CosmeticsViewComponent extends AbstractComponent {
     private static final Identifier ICON_CAPES = Identifier.of("phaze", "textures/cosmetics/category_capes.png");
     private static final Identifier ICON_HATS = Identifier.of("phaze", "textures/cosmetics/category_hats.png");
     private static final Identifier ICON_PETS = Identifier.of("phaze", "textures/cosmetics/category_pets.png");
+    private static final long PLAYER_PREVIEW_REFRESH_NS = 1_000_000_000L / 60L;
+    private static final float PLAYER_PREVIEW_HALF_WIDTH = 170.0F;
+    private static final float PLAYER_PREVIEW_ABOVE = 150.0F;
+    private static final float PLAYER_PREVIEW_BELOW = 30.0F;
 
     private boolean open;
     private String category = "ALL";
@@ -66,8 +71,7 @@ public final class CosmeticsViewComponent extends AbstractComponent {
     private double sliderAnimation = -1.0D;
     private double petSliderAnimation = -1.0D;
     private EntityRenderState cachedPreviewRenderState;
-    private String cachedPreviewSelection;
-    private float cachedPreviewYaw = Float.NaN;
+    private int cachedPreviewHash;
     private long cachedPreviewStateNanos;
     private final Animation pageAnimation = new DecelerateAnimation().setMs(180).setValue(1);
     private final CheckComponent hideElytraToggle = new CheckComponent();
@@ -92,7 +96,7 @@ public final class CosmeticsViewComponent extends AbstractComponent {
 
     public void open() {
         open = true;
-        pageAnimation.setDirection(Direction.FORWARDS);
+        pageAnimation.setDirectionAndFinish(Direction.FORWARDS);
         CosmeticsState.getInstance().refreshCatalog();
         catalogScroll = 0.0D;
         smoothedCatalogScroll = 0.0D;
@@ -106,7 +110,7 @@ public final class CosmeticsViewComponent extends AbstractComponent {
 
     public void close() {
         open = false;
-        pageAnimation.setDirection(Direction.BACKWARDS);
+        pageAnimation.setDirectionAndFinish(Direction.BACKWARDS);
         draggingPreview = false;
         draggingMotion = false;
         draggingPetFollow = false;
@@ -549,15 +553,13 @@ public final class CosmeticsViewComponent extends AbstractComponent {
                 .rotateY((float) Math.toRadians(previewYaw));
 
         float previewScale = 43.0F;
+        float centerX = panelX + PREVIEW_WIDTH / 2.0F;
+        float bottomY = panelY + 133.0F;
         long now = System.nanoTime();
-        boolean selectionChanged = !previewSelection.equals(cachedPreviewSelection);
-        boolean yawChanged = Float.isNaN(cachedPreviewYaw)
-                || Math.abs(previewYaw - cachedPreviewYaw) > 0.001F;
-
-        long refreshInterval = yawChanged ? 8_333_333L : 33_333_334L;
+        int hash = 31 * previewSelection.toLowerCase(Locale.ROOT).hashCode() + Float.floatToIntBits(previewYaw);
         EntityRenderState renderState = cachedPreviewRenderState;
-        if (renderState == null || selectionChanged || yawChanged
-                || now - cachedPreviewStateNanos >= refreshInterval) {
+        if (renderState == null || hash != cachedPreviewHash
+                || now - cachedPreviewStateNanos >= PLAYER_PREVIEW_REFRESH_NS) {
             EntityPose previousPose = player.getPose();
             try {
                 player.setPose(EntityPose.STANDING);
@@ -566,22 +568,37 @@ public final class CosmeticsViewComponent extends AbstractComponent {
                 player.setPose(previousPose);
             }
             cachedPreviewRenderState = renderState;
-            cachedPreviewSelection = previewSelection;
-            cachedPreviewYaw = previewYaw;
+            cachedPreviewHash = hash;
             cachedPreviewStateNanos = now;
         }
         PreviewMarker marker = (PreviewMarker) (Object) renderState;
         marker.phaze$previewSelection(previewSelection);
         marker.phaze$previewYaw(previewYaw);
         marker.phaze$previewAlpha(alpha);
-        int x1 = Math.round(panelX + 5.0F);
-        int x2 = Math.round(panelX + PREVIEW_WIDTH - 5.0F);
-        int y1 = Math.round(panelY + 20.0F);
-        int y2 = Math.round(panelY + 121.0F);
-        float translationY = CosmeticsState.isCape(previewSelection) ? 1.05F : 1.15F;
-        context.addEntity(renderState, previewScale,
-                new Vector3f(0.0F, translationY, 0.0F), bodyRotation,
-                new Quaternionf(), x1, y1, x2, y2);
+        float boxX = centerX - PLAYER_PREVIEW_HALF_WIDTH;
+        float boxY = bottomY - PLAYER_PREVIEW_ABOVE;
+        int x1 = Math.round(boxX);
+        int y1 = Math.round(boxY);
+        int x2 = Math.round(boxX + PLAYER_PREVIEW_HALF_WIDTH * 2.0F);
+        int y2 = Math.round(boxY + PLAYER_PREVIEW_ABOVE + PLAYER_PREVIEW_BELOW);
+        float translationX = (centerX - (x1 + x2) * 0.5F) / previewScale;
+        float translationY = (bottomY - (y1 + y2) * 0.5F) / previewScale;
+        BatchedRectangle.flushIfBatching();
+        boolean scissorEnabled = GuiClipState.isEnabled();
+        int scissorX = GuiClipState.boxX(), scissorY = GuiClipState.boxY();
+        int scissorWidth = GuiClipState.boxWidth(), scissorHeight = GuiClipState.boxHeight();
+        if (scissorEnabled) {
+            context.disableScissor();
+        }
+        try {
+            context.addEntity(renderState, previewScale,
+                    new Vector3f(translationX, translationY, 0.0F), bodyRotation,
+                    new Quaternionf(), x1, y1, x2, y2);
+        } finally {
+            if (scissorEnabled) {
+                context.enableScissor(scissorX, scissorY, scissorX + scissorWidth, scissorY + scissorHeight);
+            }
+        }
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

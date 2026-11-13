@@ -11,6 +11,7 @@ import org.joml.Matrix4f;
 import org.joml.Vector4f;
 import vorga.phazeclient.implement.features.modules.other.Animations;
 import vorga.phazeclient.implement.features.modules.other.NoRender;
+import vorga.phazeclient.implement.features.modules.hud.BossBarHud;
 import vorga.phazeclient.implement.features.modules.hud.ScoreboardHud;
 
 import java.lang.reflect.Field;
@@ -27,6 +28,7 @@ public final class ExordiumAnimationBridge {
     public static final String PLAYER_LIST = "minecraft:player_list";
     public static final String CHAT = "minecraft:chat_panel";
     public static final String SCOREBOARD = "minecraft:scoreboard";
+    public static final String BOSS_BAR = "minecraft:boss_bar";
 
     private static final Map<Object, String> COMPONENT_BY_BUFFER = new IdentityHashMap<>();
     private static final Map<Object, String> ID_BY_INSTANCE = new IdentityHashMap<>();
@@ -60,6 +62,7 @@ public final class ExordiumAnimationBridge {
     private static boolean lastTabEnabled;
     private static boolean lastChatAnimationEnabled;
     private static boolean hotbarPrepared;
+    private static boolean hotbarSubmitted;
     private static boolean tabPrepared;
     private static boolean chatPrepared;
 
@@ -88,6 +91,7 @@ public final class ExordiumAnimationBridge {
     public static void beginHudFrame(DrawContext context) {
         frameContext = context;
         DEFERRED.clear();
+        hotbarSubmitted = false;
 
         Animations animations = Animations.getInstance();
         boolean hotbarEnabled = animations != null && animations.isHotbarSlideEnabled();
@@ -95,7 +99,7 @@ public final class ExordiumAnimationBridge {
         boolean chatEnabled = animations != null
                 && (animations.isChatSmoothScrollEnabled() || animations.isChatFadeEnabled());
 
-        if (hotbarEnabled && !lastHotbarEnabled) {
+        if (hotbarEnabled != lastHotbarEnabled) {
             hotbarPrepared = false;
             hotbarSelector = null;
             requestImmediateCapture(HOTBAR);
@@ -160,6 +164,10 @@ public final class ExordiumAnimationBridge {
             if (LISTENER_REGISTERED.add(instance)) {
                 Supplier<Boolean> listener = () -> FORCE_CAPTURE.remove(id);
                 registerUpdateListenerMethod.invoke(instance, listener);
+            }
+
+            if (BOSS_BAR.equals(id) && BossBarHud.getInstance().shouldRefreshExordium(System.nanoTime())) {
+                FORCE_CAPTURE.add(id);
             }
 
             if (HOTBAR.equals(id) && lastHotbarEnabled && !hotbarPrepared) {
@@ -251,10 +259,15 @@ public final class ExordiumAnimationBridge {
 
             return true;
         }
+        if (BOSS_BAR.equals(id)) {
+            NoRender noRender = NoRender.getInstance();
+            if (noRender != null && noRender.isEnabled() && noRender.bossBar.isValue()) return true;
+        }
 
         boolean defer;
         if (HOTBAR.equals(id)) {
-            defer = lastHotbarEnabled && hotbarSelector != null;
+            hotbarSubmitted = lastHotbarEnabled && hotbarSelector != null;
+            return false;
         } else if (PLAYER_LIST.equals(id)) {
             defer = lastTabEnabled && tabPrepared && isTabVisuallyAnimated();
         } else if (CHAT.equals(id)) {
@@ -274,12 +287,14 @@ public final class ExordiumAnimationBridge {
 
     public static void renderDeferredComponents() {
         DrawContext context = frameContext;
-        if (context == null || DEFERRED.isEmpty() || reflectionFailed) {
+        if (context == null || (!hotbarSubmitted && DEFERRED.isEmpty()) || reflectionFailed) {
             DEFERRED.clear();
+            hotbarSubmitted = false;
             return;
         }
 
         try {
+            if (hotbarSubmitted) renderHotbarSelection(context);
             for (Map.Entry<Object, String> entry : DEFERRED.entrySet()) {
                 int texture;
                 try {
@@ -291,7 +306,6 @@ public final class ExordiumAnimationBridge {
                     continue;
                 }
                 switch (entry.getValue()) {
-                    case HOTBAR -> renderHotbar(context, texture);
                     case PLAYER_LIST -> renderPlayerList(context, texture);
                     case CHAT -> renderChat(context, texture);
                     default -> {
@@ -300,7 +314,7 @@ public final class ExordiumAnimationBridge {
             }
         } finally {
             DEFERRED.clear();
-
+            hotbarSubmitted = false;
         }
     }
 
@@ -371,6 +385,22 @@ public final class ExordiumAnimationBridge {
         chatBounds = union(chatBounds, rect);
         if (latest) {
             latestChatBounds = union(latestChatBounds, rect);
+        }
+    }
+
+    private static void renderHotbarSelection(DrawContext context) {
+        HotbarSelector selector = hotbarSelector;
+        if (selector == null) return;
+        int drawX = selector.baseX + Math.round(hotbarCurrentSlotX);
+        HotbarSelectionRenderer.drawClipped(context, selector.pipeline, selector.texture,
+                drawX, selector.y, selector.width, selector.height,
+                Math.round(selector.clipBounds.left), Math.round(selector.clipBounds.top),
+                Math.round(selector.clipBounds.right), Math.round(selector.clipBounds.bottom));
+        if (hotbarMirror) {
+            HotbarSelectionRenderer.drawClipped(context, selector.pipeline, selector.texture,
+                    drawX + hotbarMirrorOffset, selector.y, selector.width, selector.height,
+                    Math.round(selector.clipBounds.left), Math.round(selector.clipBounds.top),
+                    Math.round(selector.clipBounds.right), Math.round(selector.clipBounds.bottom));
         }
     }
 

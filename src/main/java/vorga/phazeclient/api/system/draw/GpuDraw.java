@@ -21,6 +21,8 @@ import org.joml.Vector4f;
 import java.nio.ByteBuffer;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
+import java.util.Map;
+import net.minecraft.client.render.RenderSetup;
 
 public final class GpuDraw {
 
@@ -39,7 +41,7 @@ public final class GpuDraw {
                                         String uniformName,
                                         GpuBuffer uniformData) {
         drawInternal(pipeline, built, samplerName, textureView, filter, modelView, tint,
-                sampler1Name, texture1View, uniformName, uniformData);
+                sampler1Name, texture1View, uniformName, uniformData, null);
     }
 
     public static void draw(RenderPipeline pipeline,
@@ -50,8 +52,24 @@ public final class GpuDraw {
                             Matrix4f modelView,
                             Vector4f tint) {
         drawInternal(pipeline, built, samplerName, textureView, filter, modelView, tint,
-                null, null, null, null);
+                null, null, null, null, null);
     }
+
+    /** Metadata-only RenderLayer adapter: no entity phases or Iris wrapping. */
+    public static void drawWithTextures(RenderPipeline pipeline, BuiltBuffer built,
+                                        Map<String, RenderSetup.Texture> textures, Matrix4f modelView) {
+        drawWithTextures(pipeline, built, textures, modelView, WHITE);
+    }
+
+    public static void drawWithTextures(RenderPipeline pipeline, BuiltBuffer built,
+                                        Map<String, RenderSetup.Texture> textures, Matrix4f modelView, Vector4f tint) {
+        drawInternal(pipeline, built, null, null, FilterMode.LINEAR, modelView,
+                tint, null, null, null, null, textures);
+    }
+
+    private static final Vector4f WHITE = new Vector4f(1, 1, 1, 1);
+    private static final Vector3f ZERO = new Vector3f();
+    private static final Matrix4f IDENTITY = new Matrix4f();
 
     private static void drawInternal(RenderPipeline pipeline,
                                      BuiltBuffer built,
@@ -63,8 +81,12 @@ public final class GpuDraw {
                                      String sampler1Name,
                                      GpuTextureView texture1View,
                                      String uniformName,
-                                     GpuBuffer uniformData) {
+                                      GpuBuffer uniformData,
+                                      Map<String, RenderSetup.Texture> textures) {
         RenderSystem.assertOnRenderThread();
+        if (!vorga.phazeclient.api.system.render.WorldOverlayRenderer.isRecording()) {
+            vorga.phazeclient.api.system.shape.batched.GuiBatch.flush();
+        }
         if (built == null) {
             return;
         }
@@ -75,10 +97,11 @@ public final class GpuDraw {
         }
 
         Framebuffer framebuffer = MinecraftClient.getInstance().getFramebuffer();
-        GpuTextureView colorView = framebuffer.getColorAttachmentView();
-        GpuTextureView depthView = framebuffer.useDepthAttachment
-                ? framebuffer.getDepthAttachmentView()
-                : null;
+        GpuTextureView colorView = RenderSystem.outputColorTextureOverride != null
+                ? RenderSystem.outputColorTextureOverride : framebuffer.getColorAttachmentView();
+        GpuTextureView depthView = RenderSystem.outputColorTextureOverride != null
+                ? RenderSystem.outputDepthTextureOverride
+                : (framebuffer.useDepthAttachment ? framebuffer.getDepthAttachmentView() : null);
 
         VertexFormat format = pipeline.getVertexFormat();
         GpuBuffer vertexBuffer = format.uploadImmediateVertexBuffer(built.getBuffer());
@@ -97,7 +120,7 @@ public final class GpuDraw {
         }
 
         GpuBufferSlice dynamicTransforms = RenderSystem.getDynamicUniforms()
-                .write(modelView, tint, new Vector3f(), new Matrix4f());
+                .write(modelView, tint, ZERO, IDENTITY);
 
         GpuSampler sampler = textureView != null
                 ? RenderSystem.getSamplerCache().get(filter)
@@ -132,6 +155,12 @@ public final class GpuDraw {
                 pass.bindTexture(sampler1Name, texture1View,
                         RenderSystem.getSamplerCache().get(filter));
             }
+            if (textures != null) {
+                for (var entry : textures.entrySet()) {
+                    RenderSetup.Texture texture = entry.getValue();
+                    pass.bindTexture(entry.getKey(), texture.textureView(), texture.sampler());
+                }
+            }
             pass.setIndexBuffer(indexBuffer, indexType);
             pass.drawIndexed(0, 0, params.indexCount(), 1);
         }
@@ -143,6 +172,6 @@ public final class GpuDraw {
                             GpuTextureView textureView,
                             FilterMode filter,
                             Matrix4f modelView) {
-        draw(pipeline, built, samplerName, textureView, filter, modelView, new Vector4f(1.0F, 1.0F, 1.0F, 1.0F));
+        draw(pipeline, built, samplerName, textureView, filter, modelView, WHITE);
     }
 }

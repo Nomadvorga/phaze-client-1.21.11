@@ -16,6 +16,15 @@ import vorga.phazeclient.base.util.PhazeBadgeUtil;
 abstract class ChatHudBackendMixin implements ChatHudBadgeRenderAccess {
     @Shadow(remap = false) @Final private DrawContext context;
 
+    @Override
+    public void phaze$recordElement(float x1, float y1, float x2, float y2,
+                                    net.minecraft.client.gui.hud.ChatHudLine.Visible line) {
+        var client = net.minecraft.client.MinecraftClient.getInstance();
+        boolean latest = client.inGameHud.getChatHud() instanceof vorga.phazeclient.api.system.hud.ChatAnimationFrameAccess access
+                && access.phaze$isLatestChatLine(line);
+        vorga.phazeclient.api.system.hud.ExordiumAnimationBridge.recordChatElement(context, x1, y1, x2, y2, latest);
+    }
+
     @Inject(method = "indicator", at = @At("HEAD"))
     private void phaze$translateIndicator(int x1, int y1, int x2, int y2, float opacity,
                                           MessageIndicator indicator, CallbackInfo ci) {

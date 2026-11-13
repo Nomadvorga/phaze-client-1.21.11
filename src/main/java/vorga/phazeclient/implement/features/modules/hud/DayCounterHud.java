@@ -10,14 +10,13 @@ public final class DayCounterHud extends RectHudModule {
         return INSTANCE;
     }
 
-    public final SectionSetting otherSection = new SectionSetting("Other");
 
     public final BooleanSetting reverseOrder = new BooleanSetting("Reverse Order", "Show \"Day: 5\" instead of \"5 Days\"").setValue(false);
 
     private DayCounterHud() {
         super("day_counter_hud", "Day Counter", 22.0f, 338.0f, 1.0f);
         reverseOrder.setFullWidth(true);
-        setup(otherSection, reverseOrder, cornerRounding);
+        setup(reverseOrder);
     }
 
     @Override

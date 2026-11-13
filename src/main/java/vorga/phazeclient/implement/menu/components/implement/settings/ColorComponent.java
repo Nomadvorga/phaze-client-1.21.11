@@ -6,13 +6,10 @@ import org.joml.Matrix3x2fStack;
 import org.joml.Matrix3x2fc;
 
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.util.math.MatrixStack;
 import vorga.phazeclient.api.feature.module.Module;
 import vorga.phazeclient.api.feature.module.setting.implement.ColorSetting;
 import vorga.phazeclient.api.system.font.FontRenderer;
-import vorga.phazeclient.api.system.font.Fonts;
-import vorga.phazeclient.api.system.font.msdf.MsdfFonts;
-import vorga.phazeclient.api.system.font.msdf.MsdfRenderer;
+import vorga.phazeclient.implement.menu.font.GuiFonts;
 import vorga.phazeclient.api.system.shape.ShapeProperties;
 import vorga.phazeclient.base.util.math.MathUtil;
 import vorga.phazeclient.core.Main;
@@ -30,7 +27,6 @@ import java.util.List;
 import static vorga.phazeclient.api.system.font.Fonts.Type.INTER_BOLD;
 
 public class ColorComponent extends AbstractSettingComponent {
-    private static final float ROW_HEIGHT = 24.0F;
     private static final float LEFT_PADDING = 10.0F;
     private static final float COLOR_SIZE = 12.0F;
     private static final float COLOR_RIGHT = 10.0F;
@@ -96,16 +92,14 @@ public class ColorComponent extends AbstractSettingComponent {
         renderHeader(matrix);
 
         height = 73;
+        updateLabelHover(mouseX, mouseY);
     }
 
     private void renderPopupRow(DrawContext context, int mouseX, int mouseY) {
 
         Matrix3x2fStack matrix = context.getMatrices();
 
-        MatrixStack textPose = new MatrixStack();
-        textPose.multiplyPositionMatrix(GuiMatrix.mat4(matrix));
-
-        FontRenderer titleFont = Fonts.getSize(13, INTER_BOLD);
+        FontRenderer titleFont = GuiFonts.getSize(13, INTER_BOLD);
         boolean isModified = setting.isModified();
         float textOffset = animatedTextOffset(isModified);
         boolean hovered = MathUtil.isHovered(mouseX, mouseY, x, y, width, ROW_HEIGHT);
@@ -114,17 +108,17 @@ public class ColorComponent extends AbstractSettingComponent {
         }
         float hoverProgress = animatedCardHover(hovered);
 
-        height = (int) ROW_HEIGHT;
+        height = ROW_HEIGHT;
         renderSettingCard(context, 0.0F, hoverProgress);
         resetIcon.position(x, y, height).alpha(currentAlpha).modified(isModified).render(context);
 
         float colorX = x + width - COLOR_RIGHT - COLOR_SIZE;
         float colorY = y + ROW_HEIGHT / 2.0F - COLOR_SIZE / 2.0F;
         float textX = x + LEFT_PADDING + textOffset;
-        float textWidth = Math.max(12.0F, colorX - textX - 8.0F);
-
-        String title = trimToWidth(titleFont, setting.getName(), textWidth);
-        titleFont.drawString(textPose, title, textX, centeredTextY(titleFont, title, y, ROW_HEIGHT), primaryText());
+        String title = label.singleLine(setting.getLocalizedName());
+        label.render(matrix, titleFont, title, textX, centeredTextY(titleFont, title, y, ROW_HEIGHT),
+                colorX - 8.0F, y, ROW_HEIGHT, primaryText());
+        updateLabelHover(mouseX, mouseY);
 
         int colorFill = MenuStyle.withAlpha(0xFF000000 | (setting.getColor() & 0x00FFFFFF), currentAlpha);
         int colorOutline = MenuStyle.withAlpha(MenuStyle.mix(MenuStyle.settingOutline(false), 0xFFFFFFFF, hovered ? 0.12F : 0.0F), currentAlpha);
@@ -154,16 +148,8 @@ public class ColorComponent extends AbstractSettingComponent {
             return;
         }
 
-        MsdfRenderer.renderText(
-                MsdfFonts.bold(),
-                header,
-                HEADER_TEXT_SIZE,
-                MenuStyle.withAlpha(MenuStyle.TEXT_PRIMARY, currentAlpha),
-                GuiMatrix.mat4(matrix),
-                x + 10,
-                y + HEADER_TOP_PAD,
-                0.0F
-        );
+        label.renderMsdf(matrix, header, HEADER_TEXT_SIZE, x + 10, y + HEADER_TOP_PAD,
+                x + width - 10, y, 13.0F, MenuStyle.withAlpha(MenuStyle.TEXT_PRIMARY, currentAlpha));
     }
 
     private String resolveModuleVisibleName() {

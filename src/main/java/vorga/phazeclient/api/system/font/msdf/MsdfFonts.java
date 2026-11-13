@@ -8,6 +8,13 @@ public final class MsdfFonts {
     private MsdfFonts() {
     }
 
+    public static void onResourcesReloaded() {
+        if (medium != null) medium.onResourcesReloaded();
+        if (bold != null) bold.onResourcesReloaded();
+        if (hud != null) hud.onResourcesReloaded();
+        MsdfRenderer.onResourcesReloaded();
+    }
+
     public static MsdfFont medium() {
         if (medium == null) {
             medium = MsdfFont.builder().atlas("medium").data("medium").build();

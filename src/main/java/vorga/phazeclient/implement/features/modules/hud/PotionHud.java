@@ -24,7 +24,7 @@ public final class PotionHud extends RectHudModule {
         super("potion_hud", "Potions", 22.0f, 286.0f, 1.0f);
         colorByType.setFullWidth(true);
         flashOnExpiry.setFullWidth(true);
-        setup(colorsSection, colorByType, flashOnExpiry, otherSection, cornerRounding);
+        setup(colorsSection, colorByType, flashOnExpiry);
     }
 
     @Override

@@ -4,12 +4,12 @@
 #moj_import <minecraft:projection.glsl>
 
 // Arc parameters as vertex attributes rather than loose uniforms - see
-// InvertedRectangle / round_batched for why. All four vertices of the
+// InvertedRectangle / gui_batched for why. All four vertices of the
 // quad carry identical values, so the interpolated value is constant per
 // fragment.
 //
 // The two gradient colors cannot ride on the standard COLOR attribute the
-// way round_batched's corner gradient does: arc.fsh mixes them by polar
+// way gui_batched's corner gradient does: arc.fsh mixes them by polar
 // angle, not by position, so both have to reach every fragment intact.
 in vec3 Position;
 in vec4 ArcRect;    // location.xy, size.xy

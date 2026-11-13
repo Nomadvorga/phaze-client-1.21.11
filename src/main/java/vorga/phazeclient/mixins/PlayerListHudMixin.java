@@ -239,6 +239,17 @@ public class PlayerListHudMixin {
     }
 
     @Inject(method = "getPlayerName", at = @At("RETURN"), cancellable = true)
+    private void phaze$colorTeammate(PlayerListEntry entry, CallbackInfoReturnable<Text> cir) {
+        if (entry == null || vorga.phazeclient.base.util.MessengerService.getInstance().getTeammates().isEmpty()) return;
+        if (!vorga.phazeclient.implement.messenger.ChatWorld.isTeammate(entry.getProfile().name())) return;
+        Text current = cir.getReturnValue();
+        if (current == null) return;
+        MutableText styled = current.copy();
+        styled.setStyle(styled.getStyle().withColor(vorga.phazeclient.implement.messenger.ChatWorld.TEAMMATE_COLOR));
+        cir.setReturnValue(styled);
+    }
+
+    @Inject(method = "getPlayerName", at = @At("RETURN"), cancellable = true)
     private void phaze$nickHideTabName(PlayerListEntry entry, org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Text> cir) {
         NickHider hider = NickHider.getInstance();
         if (hider == null || !hider.isEnabled()) {
@@ -380,13 +391,13 @@ public class PlayerListHudMixin {
     }
 
     @WrapOperation(
-            method = {"renderScoreboardObjective", "renderLatencyIcon"},
+            method = {"renderHearts", "renderLatencyIcon"},
             at = @At(
                     value = "INVOKE",
 
                     target = "Lnet/minecraft/client/gui/DrawContext;drawGuiTexture(Lcom/mojang/blaze3d/pipeline/RenderPipeline;Lnet/minecraft/util/Identifier;IIII)V"
             ),
-            require = 0
+            require = 1
     )
     private void phaze$fadeTabGuiTexture(
             DrawContext context,

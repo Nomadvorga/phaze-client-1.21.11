@@ -17,7 +17,6 @@ import vorga.phazeclient.api.system.font.msdf.MsdfRenderer;
 import vorga.phazeclient.api.system.shape.ShapeProperties;
 import vorga.phazeclient.base.util.Lang;
 import vorga.phazeclient.base.util.math.MathUtil;
-import vorga.phazeclient.base.util.other.StringUtil;
 import vorga.phazeclient.implement.menu.MenuStyle;
 import vorga.phazeclient.implement.menu.components.implement.settings.AbstractSettingComponent;
 
@@ -75,9 +74,6 @@ public class MultiSelectComponent extends AbstractSettingComponent {
         Matrix3x2fStack matrices = context.getMatrices();
         Matrix4f positionMatrix = GuiMatrix.mat4(matrices);
 
-        float labelMaxWidth = Math.max(40.0F, width - CHIPS_RIGHT_PAD - 18.0F);
-        String wrapped = StringUtil.wrap(setting.getLocalizedName(), (int) labelMaxWidth, 14);
-
         ChipLayout layout = computeChipLayout();
         float labelBandHeight = LABEL_TOP_PAD + LABEL_TEXT_SIZE + LABEL_TO_CHIPS_GAP;
         float chipBlockHeight = layout.totalRows() * CHIP_HEIGHT + Math.max(0, layout.totalRows() - 1) * CHIP_GAP_Y;
@@ -89,16 +85,10 @@ public class MultiSelectComponent extends AbstractSettingComponent {
 
         float labelX = x + 10.0F;
         float labelY = y + LABEL_TOP_PAD;
-        MsdfRenderer.renderText(
-                MsdfFonts.bold(),
-                wrapped,
-                LABEL_TEXT_SIZE,
-                MenuStyle.withAlpha(MenuStyle.TEXT_PRIMARY, currentAlpha),
-                positionMatrix,
-                labelX,
-                labelY,
-                0.0F
-        );
+        label.renderMsdf(matrices, setting.getLocalizedName(), LABEL_TEXT_SIZE, labelX, labelY,
+                x + width - CHIPS_RIGHT_PAD, y, labelBandHeight - LABEL_TO_CHIPS_GAP,
+                MenuStyle.withAlpha(MenuStyle.TEXT_PRIMARY, currentAlpha));
+        updateLabelHover(mouseX, mouseY);
 
         renderChips(context, matrices, positionMatrix, layout, mouseX, mouseY);
 

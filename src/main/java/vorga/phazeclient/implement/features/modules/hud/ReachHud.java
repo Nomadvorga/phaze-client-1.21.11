@@ -20,7 +20,6 @@ public final class ReachHud extends RectHudModule {
 
     private long lastHitTimeMillis = 0L;
 
-    public final SectionSetting otherSection = new SectionSetting("Other");
 
     public final BooleanSetting reverseOrder = new BooleanSetting("Reverse Order", "Add \"Reach:\" prefix instead of just \"X blocks\"").setValue(false);
 
@@ -31,7 +30,7 @@ public final class ReachHud extends RectHudModule {
     private ReachHud() {
         super("reach_hud", "Reach HUD");
         reverseOrder.setFullWidth(true);
-        setup(otherSection, reverseOrder, cornerRounding);
+        setup(reverseOrder);
     }
 
     @Override

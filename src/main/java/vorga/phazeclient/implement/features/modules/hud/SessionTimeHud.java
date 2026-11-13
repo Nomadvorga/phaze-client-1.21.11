@@ -5,6 +5,8 @@ import vorga.phazeclient.api.feature.module.setting.implement.SelectSetting;
 
 public final class SessionTimeHud extends RectHudModule {
     private static final SessionTimeHud INSTANCE = new SessionTimeHud();
+    private static final long SESSION_START_MS = System.currentTimeMillis();
+    public long getSessionStartMs() { return SESSION_START_MS; }
 
     public final SectionSetting sessionSection = new SectionSetting("Session");
     public final SelectSetting displayOption = new SelectSetting("Display Option", "Session time format")
@@ -18,7 +20,7 @@ public final class SessionTimeHud extends RectHudModule {
     private SessionTimeHud() {
         super("session_time_hud", "Session Time", 22.0f, 476.0f, 1.0f);
         displayOption.setFullWidth(true);
-        setup(sessionSection, displayOption, otherSection, cornerRounding);
+        setup(sessionSection, displayOption);
     }
 
     @Override

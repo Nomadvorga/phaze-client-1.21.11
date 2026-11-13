@@ -10,7 +10,8 @@ import vorga.phazeclient.api.system.hud.ExordiumAnimationBridge;
 @Pseudo
 @Mixin(targets = "dev.tr7zw.exordium.util.DelayedRenderCallManager", remap = false)
 public abstract class ExordiumDelayedRenderCallManagerMixin {
-    @Inject(method = "renderComponents", at = @At(value = "INVOKE", target = "Ldev/tr7zw/exordium/util/rendersystem/MultiStateHolder;apply()V", shift = At.Shift.BEFORE), remap = false)
+    // 1.4.3 uses CustomShaderManager, not MultiStateHolder. HEAD also handles an empty vanilla queue.
+    @Inject(method = "renderComponents", at = @At("HEAD"), require = 1, remap = false)
     private void phaze$renderAnimatedCachedTextures(CallbackInfo ci) {
         ExordiumAnimationBridge.renderDeferredComponents();
     }

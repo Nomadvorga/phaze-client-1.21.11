@@ -72,12 +72,15 @@ public abstract class AbstractWindow extends AbstractComponent {
 
         context.createNewRootLayer();
         context.getMatrices().pushMatrix();
-        MathUtil.scale(context.getMatrices(), x + width / 2, y + height / 2, scale, () -> {
-            this.globalAlpha = alpha;
-            drawWindow(context, mouseX, mouseY, delta);
-        });
-        BatchedRectangle.flushIfBatching();
-        context.getMatrices().popMatrix();
+        try {
+            MathUtil.scale(context.getMatrices(), x + width / 2, y + height / 2, scale, () -> {
+                this.globalAlpha = alpha;
+                drawWindow(context, mouseX, mouseY, delta);
+            });
+            BatchedRectangle.flushIfBatching();
+        } finally {
+            context.getMatrices().popMatrix();
+        }
     }
 
     protected abstract void drawWindow(DrawContext context, int mouseX, int mouseY, float delta);

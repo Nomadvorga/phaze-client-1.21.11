@@ -1,5 +1,4 @@
 package vorga.phazeclient.base.util.color;
-
 import it.unimi.dsi.fastutil.chars.Char2IntArrayMap;
 import lombok.Getter;
 import lombok.experimental.UtilityClass;
@@ -7,11 +6,9 @@ import net.minecraft.util.math.MathHelper;
 import vorga.phazeclient.implement.features.modules.client.Theme;
 import org.jetbrains.annotations.NotNull;
 import org.joml.Vector4i;
-
 import java.awt.*;
 import java.util.concurrent.*;
 import java.util.regex.Pattern;
-
 @Getter
 @UtilityClass
 public class ColorUtil {
@@ -34,7 +31,6 @@ public class ColorUtil {
         put('E', 0xFFFF55);
         put('F', 0xFFFFFF);
     }};
-
     public final int RED = getColor(255, 0, 0);
     public final int GREEN = getColor(0, 255, 0);
     public final int BLUE = getColor(0, 0, 255);
@@ -43,101 +39,80 @@ public class ColorUtil {
     public final int BLACK = getColor(0);
     public final int HALF_BLACK = getColor(0, 0.5F);
     public final int LIGHT_RED = getColor(255, 85, 85);
-
     public int red(int c) {
         return (c >> 16) & 0xFF;
     }
-
     public int green(int c) {
         return (c >> 8) & 0xFF;
     }
-
     public int blue(int c) {
         return c & 0xFF;
     }
-
     public int alpha(int c) {
         return (c >> 24) & 0xFF;
     }
-
     public float redf(int c) {
         return red(c) / 255.0f;
     }
-
     public float greenf(int c) {
         return green(c) / 255.0f;
     }
-
     public float bluef(int c) {
         return blue(c) / 255.0f;
     }
-
     public float alphaf(int c) {
         return alpha(c) / 255.0f;
     }
-
     public int[] getRGBA(int c) {
         return new int[]{red(c), green(c), blue(c), alpha(c)};
     }
-
     public int[] getRGB(int c) {
         return new int[]{red(c), green(c), blue(c)};
     }
-
     public float[] getRGBAf(int c) {
         return new float[]{redf(c), greenf(c), bluef(c), alphaf(c)};
     }
-
     public float[] getRGBf(int c) {
         return new float[]{redf(c), greenf(c), bluef(c)};
     }
-
     public int getColor(float red, float green, float blue, float alpha) {
         return getColor(Math.round(red * 255), Math.round(green * 255), Math.round(blue * 255), Math.round(alpha * 255));
     }
-
     public int getColor(int red, int green, int blue, float alpha) {
         return getColor(red, green, blue, Math.round(alpha * 255));
     }
-
     public int getColor(float red, float green, float blue) {
         return getColor(red, green, blue, 1.0F);
     }
-
     public int getColor(int brightness, int alpha) {
         return getColor(brightness, brightness, brightness, alpha);
     }
-
     public int getColor(int brightness, float alpha) {
         return getColor(brightness, Math.round(alpha * 255));
     }
-
     public int getColor(int brightness) {
         return getColor(brightness, brightness, brightness);
     }
-
     public int replAlpha(int color, int alpha) {
         return getColor(red(color), green(color), blue(color), alpha);
     }
-
     public int replAlpha(int color, float alpha) {
         return getColor(red(color), green(color), blue(color), alpha);
     }
-
     public int multAlpha(int color, float percent01) {
         return getColor(red(color), green(color), blue(color), Math.round(alpha(color) * percent01));
     }
-
+    public int multShaderColor(int color) {
+        return vorga.phazeclient.api.system.draw.PhazeAlpha.tint(color);
+    }
     public int multColor(int colorStart, int colorEnd, float progress) {
         return getColor(Math.round(red(colorStart) * (redf(colorEnd) * progress)), Math.round(green(colorStart) * (greenf(colorEnd) * progress)),
                 Math.round(blue(colorStart) * (bluef(colorEnd) * progress)), Math.round(alpha(colorStart) * (alphaf(colorEnd) * progress)));
     }
-
     public int multRed(int colorStart, int colorEnd, float progress) {
         return getColor(Math.round(red(colorStart) * (redf(colorEnd) * progress)), Math.round(green(colorStart) * (greenf(colorEnd) * progress)),
                 Math.round(blue(colorStart) * (bluef(colorEnd) * progress)), Math.round(alpha(colorStart) * (alphaf(colorEnd) * progress)));
     }
-
     public int multDark(int color, float percent01) {
         return getColor(
                 Math.round(red(color) * percent01),
@@ -146,7 +121,6 @@ public class ColorUtil {
                 alpha(color)
         );
     }
-
     public int multBright(int color, float percent01) {
         return getColor(
                 Math.min(255, Math.round(red(color) / percent01)),
@@ -155,7 +129,6 @@ public class ColorUtil {
                 alpha(color)
         );
     }
-
     public int overCol(int color1, int color2, float percent01) {
         final float percent = MathHelper.clamp(percent01, 0F, 1F);
         return getColor(
@@ -165,42 +138,32 @@ public class ColorUtil {
                 MathHelper.lerp(percent, alpha(color1), alpha(color2))
         );
     }
-
     public Vector4i multRedAndAlpha(Vector4i color, float red, float alpha) {
         return new Vector4i(multRedAndAlpha(color.x, red, alpha), multRedAndAlpha(color.y, red, alpha), multRedAndAlpha(color.w, red, alpha), multRedAndAlpha(color.z, red, alpha));
     }
-
     public int multRedAndAlpha(int color, float red, float alpha) {
         return getColor(red(color), Math.min(255, Math.round(green(color) / red)), Math.min(255, Math.round(blue(color) / red)), Math.round(alpha(color) * alpha));
     }
-
     public int multRed(int color, float percent01) {
         return getColor(red(color), Math.min(255, Math.round(green(color) / percent01)), Math.min(255, Math.round(blue(color) / percent01)), alpha(color));
     }
-
     public int multGreen(int color, float percent01) {
         return getColor(Math.min(255, Math.round(green(color) / percent01)), green(color), Math.min(255, Math.round(blue(color) / percent01)), alpha(color));
     }
-
     public int gradientToRed(int originalColor, float damageIntensity) {
         damageIntensity = MathHelper.clamp(damageIntensity, 0.0f, 1.0f);
-
         int originalRed = red(originalColor);
         int originalGreen = green(originalColor);
         int originalBlue = blue(originalColor);
         int originalAlpha = alpha(originalColor);
-
         int targetRed = 255;
         int targetGreen = 0;
         int targetBlue = 0;
-
         int newRed = Math.round(MathHelper.lerp(damageIntensity, originalRed, targetRed));
         int newGreen = Math.round(MathHelper.lerp(damageIntensity, originalGreen, targetGreen));
         int newBlue = Math.round(MathHelper.lerp(damageIntensity, originalBlue, targetBlue));
-
         return getColor(newRed, newGreen, newBlue, originalAlpha);
     }
-
     public int[] genGradientForText(int color1, int color2, int length) {
         int[] gradient = new int[length];
         for (int i = 0; i < length; i++) {
@@ -209,43 +172,35 @@ public class ColorUtil {
         }
         return gradient;
     }
-
     public int rainbow(int speed, int index, float saturation, float brightness, float opacity) {
         int angle = (int) ((System.currentTimeMillis() / speed + index) % 360);
         float hue = angle / 360f;
         int color = Color.HSBtoRGB(hue, saturation, brightness);
         return getColor(red(color), green(color), blue(color), Math.round(opacity * 255));
     }
-
     public int fade(int speed, int index, int first, int second) {
         int angle = (int) ((System.currentTimeMillis() / speed + index) % 360);
         angle = angle >= 180 ? 360 - angle : angle;
         return overCol(first, second, angle / 180f);
     }
-
     public int fade(int index) {
         Color clientColor = new Color(getClientColor());
         return fade(8, index, clientColor.brighter().getRGB(), clientColor.darker().getRGB());
     }
-
     public int fade(int index, int indexMultiplier) {
         Color clientColor = new Color(getClientColor());
         return fade(8, index * indexMultiplier, clientColor.brighter().getRGB(), clientColor.darker().getRGB());
     }
-
     public int invertFade(int index) {
         Color clientColor = new Color(getClientColor());
         return fade(8, index, clientColor.darker().getRGB(), clientColor.brighter().getRGB());
     }
-
     public int multiColorFade(int index) {
         int[] colors = getClientColors();
         if (colors.length == 0) return getColor(255, 255, 255);
         if (colors.length == 1) return colors[0];
-
         float speedMultiplier = Theme.getInstance().getFadeSpeed();
         long currentTime = System.currentTimeMillis();
-
         if (colors.length == 2) {
             double adjustedSpeed = 8.0 / speedMultiplier;
             int angle = (int) ((currentTime / adjustedSpeed + index) % 360);
@@ -254,121 +209,94 @@ public class ColorUtil {
         } else {
             double adjustedSpeed = 10.0 / speedMultiplier;
             float timeProgress = (float) ((currentTime / adjustedSpeed + index * 100) % (colors.length * 360L)) / 360.0f;
-
             int index1 = (int) Math.floor(timeProgress) % colors.length;
             int index2 = (index1 + 1) % colors.length;
             float lerp = timeProgress - (int) Math.floor(timeProgress);
-
             return overCol(colors[index1], colors[index2], lerp);
         }
     }
-
     public Vector4i roundClientColor(float alpha) {
         return new Vector4i(ColorUtil.multAlpha(ColorUtil.multiColorFade(270), alpha), ColorUtil.multAlpha(ColorUtil.multiColorFade(0), alpha),
                 ColorUtil.multAlpha(ColorUtil.multiColorFade(180), alpha), ColorUtil.multAlpha(ColorUtil.multiColorFade(90), alpha));
     }
-
     public int getColor(int red, int green, int blue, int alpha) {
         return computeColor(red, green, blue, alpha);
     }
-
     public int getColor(int red, int green, int blue) {
         return getColor(red, green, blue, 255);
     }
-
     private int computeColor(int red, int green, int blue, int alpha) {
         return ((MathHelper.clamp(alpha, 0, 255) << 24) |
                 (MathHelper.clamp(red, 0, 255) << 16) |
                 (MathHelper.clamp(green, 0, 255) << 8) |
                 MathHelper.clamp(blue, 0, 255));
     }
-
     public String formatting(int color) {
         return "⏏" + color + "⏏";
     }
-
     public static int lighter(int hex) {
         return lighter(hex, 1);
     }
-
     public static int lighter(int hex, int steps) {
         int a = (hex >> 24) & 0xFF;
         int r = (hex >> 16) & 0xFF;
         int g = (hex >> 8) & 0xFF;
         int b = hex & 0xFF;
-
         for (int i = 0; i < steps; i++) {
             r += (255 - r) / 10;
             g += (255 - g) / 10;
             b += (255 - b) / 10;
         }
-
         return (a << 24) | (r << 16) | (g << 8) | b;
     }
-
     public static int darker(int hex) {
         return darker(hex, 1);
     }
-
     public static int darker(int hex, int steps) {
         int a = (hex >> 24) & 0xFF;
         int r = (hex >> 16) & 0xFF;
         int g = (hex >> 8) & 0xFF;
         int b = hex & 0xFF;
-
         for (int i = 0; i < steps; i++) {
             r -= r / 10;
             g -= g / 10;
             b -= b / 10;
         }
-
         return (a << 24) | (r << 16) | (g << 8) | b;
     }
-
     public String removeFormatting(String text) {
         return text == null || text.isEmpty() ? null : FORMATTING_CODE_PATTERN.matcher(text).replaceAll("");
     }
-
     private ColorPalette getPalette() {
         return Theme.getInstance().getCurrentPalette();
     }
-
     public int getMainGuiColor() {
         return getPalette().mainGuiColor();
     }
-
     public int getGuiRectColor(float alpha) {
         return multAlpha(getPalette().guiRectColor(), alpha);
     }
-
     public int getGuiRectColor2(float alpha) {
         return multAlpha(getPalette().guiRectColor2(), alpha);
     }
-
     public int getRect(float alpha) {
         return multAlpha(getPalette().rectColor(), alpha);
     }
-
     public int getRectDarker(float alpha) {
         return multAlpha(getPalette().rectDarkerColor(), alpha);
     }
-
     public int getText(float alpha) {
         return multAlpha(getText(), alpha);
     }
-
     public int getText() {
         return getPalette().textColor();
     }
-
     public int getDescription() {
         return getPalette().descriptionColor();
     }
-
     public int getDescription(float alpha) {
         return multAlpha(getDescription(), alpha);
     }
-
     public int getClientColorByIndex(int index) {
         int[] colors = getClientColors();
         if (colors.length == 0) {
@@ -376,51 +304,39 @@ public class ColorUtil {
         }
         return colors[Math.max(0, Math.min(index, colors.length - 1))];
     }
-
     public int getClientColor() {
         int[] colors = getClientColors();
         if (colors.length == 0) return getColor(255, 255, 255);
         if (colors.length == 1) return colors[0];
-
         return multiColorFade(0);
     }
-
     public int getClientColorFade(int offset) {
         int[] colors = getClientColors();
         if (colors.length == 0) return getColor(255, 255, 255);
         if (colors.length == 1) return colors[0];
-
         return multiColorFade(offset);
     }
-
     public int getClientColor(float alpha) {
         return multAlpha(getClientColor(), alpha);
     }
-
     public int getClientColorFade(int offset, float alpha) {
         return multAlpha(getClientColorFade(offset), alpha);
     }
-
     public int[] getClientColors() {
         return Theme.getInstance().getClientColors();
     }
-
     public int getFriendColor() {
         return getPalette().friendColor();
     }
-
     public int getOutline(float alpha, float bright) {
         return multBright(multAlpha(getOutline(), alpha), bright);
     }
-
     public int getOutline(float alpha) {
         return multAlpha(getOutline(), alpha);
     }
-
     public int getOutline() {
         return getPalette().outlineColor();
     }
-
     public boolean isDarkBackground() {
         int backgroundColor = getRect(1.0F);
         int r = red(backgroundColor);
@@ -429,7 +345,6 @@ public class ColorUtil {
         double luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
         return luminance < 0.5;
     }
-
     public int[] getBadgeColors(String role) {
         return switch (role.toUpperCase()) {
             case "YOUTUBE" -> new int[]{
@@ -458,7 +373,6 @@ public class ColorUtil {
             };
         };
     }
-
     private int parseColor(String hex) {
         if (hex.startsWith("#")) {
             hex = hex.substring(1);

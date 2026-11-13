@@ -11,7 +11,6 @@ import vorga.phazeclient.api.feature.module.setting.implement.SectionSetting;
 public final class InventoryHud extends RectHudModule {
     private static final InventoryHud INSTANCE = new InventoryHud();
 
-    public final SectionSetting otherSection = new SectionSetting("Other");
     public final BooleanSetting drawCounts = new BooleanSetting(
             "Item Counts",
             "Draw the stack count badge on each item"
@@ -33,7 +32,7 @@ public final class InventoryHud extends RectHudModule {
         colorSection.setVisible(() -> false);
 
         drawCounts.setFullWidth(true);
-        setup(otherSection, drawCounts, cornerRounding);
+        setup(drawCounts);
     }
 
     public static InventoryHud getInstance() {

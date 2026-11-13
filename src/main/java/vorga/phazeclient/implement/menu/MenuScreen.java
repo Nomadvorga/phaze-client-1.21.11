@@ -1,6 +1,5 @@
 package vorga.phazeclient.implement.menu;
 
-import com.mojang.blaze3d.systems.RenderSystem;
 import lombok.Getter;
 import lombok.Setter;
 import vorga.phazeclient.api.feature.module.ModuleCategory;
@@ -52,12 +51,14 @@ public class MenuScreen extends Screen implements QuickImports {
     private static final int MIN_WIDTH = 382;
     private static final int MIN_HEIGHT = 248;
     private static final int SCREEN_MARGIN = 24;
-    private static final float CATEGORY_START_X = 112.0F;
+    private static final float CATEGORY_START_X = MenuLayout.SIDEBAR_WIDTH + MenuLayout.CONTENT_INSET;
+    private static final float CONTENT_EDGE_GAP = MenuLayout.CONTENT_INSET - 1.0F;
     private static final float SEARCH_WIDTH = 82.0F;
-    private static final float SEARCH_RIGHT_MARGIN = 10.0F;
-    private static final float CATEGORY_SEARCH_GAP = 10.0F;
-    private static final float CATEGORY_ROW_Y = 39.0F;
+    private static final float SEARCH_RIGHT_MARGIN = 1.0F + CONTENT_EDGE_GAP;
+    private static final float CATEGORY_SEARCH_GAP = MenuLayout.PANEL_GAP + 4.0F;
+    private static final float CATEGORY_ROW_Y = 35.0F + CONTENT_EDGE_GAP;
     private static final int HEADER_DRAG_HEIGHT = 34;
+    private static final int TOP_TAB_TRANSITION_MS = 145;
 
     public static MenuScreen INSTANCE = new MenuScreen();
     private final List<AbstractComponent> components = new ArrayList<>();
@@ -72,7 +73,15 @@ public class MenuScreen extends Screen implements QuickImports {
             new vorga.phazeclient.implement.menu.components.implement.other.CosmeticsViewComponent();
     private final vorga.phazeclient.implement.menu.components.implement.other.ConfigShareModalComponent configShareModal =
             new vorga.phazeclient.implement.menu.components.implement.other.ConfigShareModalComponent();
+    private final vorga.phazeclient.implement.menu.components.implement.other.MessengerViewComponent messengerView =
+            new vorga.phazeclient.implement.menu.components.implement.other.MessengerViewComponent();
+    private final vorga.phazeclient.implement.menu.components.implement.other.WaypointEditorModal waypointEditor =
+            new vorga.phazeclient.implement.menu.components.implement.other.WaypointEditorModal();
     public final Animation animation = new LinearAnimation().setMs(200).setValue(1);
+    private final Animation topTabTransitionAnimation =
+            new DecelerateAnimation().setMs(TOP_TAB_TRANSITION_MS).setValue(1);
+    private TopTab activeTopTab = TopTab.MODS;
+    private TopTab pendingTopTab;
     public ModuleCategory category = ModuleCategory.ALL;
     public int x, y, width, height;
 
@@ -102,6 +111,9 @@ public class MenuScreen extends Screen implements QuickImports {
 
     public void initialize() {
         animation.setDirection(FORWARDS);
+        topTabTransitionAnimation.setDirectionAndFinish(FORWARDS);
+        horizontalGuideAnimation.setDirectionAndFinish(BACKWARDS);
+        verticalGuideAnimation.setDirectionAndFinish(BACKWARDS);
         categoryContainerComponent.ensureCategoryComponentsInitialized();
 
         backgroundComponent.setSearchComponent(searchComponent);
@@ -131,6 +143,7 @@ public class MenuScreen extends Screen implements QuickImports {
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         updateOverlayMetrics();
         Theme.getInstance().applyMenuTheme();
+        updateTopTabTransition();
         super.render(context, mouseX, mouseY, delta);
         int overlayMouseX = (int) Math.round(toMenuCoordinateX(mouseX));
         int overlayMouseY = (int) Math.round(toMenuCoordinateY(mouseY));
@@ -156,57 +169,77 @@ public class MenuScreen extends Screen implements QuickImports {
         searchComponent.position(searchX, y + CATEGORY_ROW_Y);
 
         context.getMatrices().pushMatrix();
-        float guiScale = MenuUiSettings.getInstance().getGuiScale();
-        float menuCenterX = x + width / 2.0F;
-        float menuCenterY = y + height / 2.0F;
-        context.getMatrices().translate(menuCenterX, menuCenterY);
-        context.getMatrices().scale(guiScale, guiScale);
-        context.getMatrices().translate(-menuCenterX, -menuCenterY);
-        context.getMatrices().scale(overlayRenderScale, overlayRenderScale);
-        float scaleAnimation = getScaleAnimation();
-        float alphaAnimation = getAlphaAnimation();
-        MathUtil.scale(context.getMatrices(), x + (float) width / 2, y + (float) height / 2, scaleAnimation, () -> renderGuiRegionBlur(context));
-
-        vorga.phazeclient.api.system.shape.batched.BatchedRectangle.beginScope();
         try {
-            MathUtil.scale(context.getMatrices(), x + (float) width / 2, y + (float) height / 2, scaleAnimation, () -> {
-                boolean moduleDetailOpen = moduleDetailComponent.isOpen();
-                boolean configsViewOpen = configsView.isOpen();
-                boolean cosmeticsViewOpen = cosmeticsView.isOpen();
-                boolean mouseOverWindow = windowManager.isMouseOverAnyWindow(overlayMouseX, overlayMouseY);
-                int routedMouseX = mouseOverWindow ? Integer.MIN_VALUE / 4 : overlayMouseX;
-                int routedMouseY = mouseOverWindow ? Integer.MIN_VALUE / 4 : overlayMouseY;
-                for (AbstractComponent component : components) {
-                    if ((moduleDetailOpen || configsViewOpen || cosmeticsViewOpen)
-                            && (component == searchComponent || component == categoryContainerComponent
-                            || component == moduleDescriptionComponent)) {
-                        continue;
+            float guiScale = MenuUiSettings.getInstance().getGuiScale();
+            float menuCenterX = x + width / 2.0F;
+            float menuCenterY = y + height / 2.0F;
+            applyMenuTransform(context.getMatrices(), overlayRenderScale, guiScale, menuCenterX, menuCenterY);
+            float scaleAnimation = getScaleAnimation();
+            float alphaAnimation = getAlphaAnimation();
+            vorga.phazeclient.api.system.shape.batched.BatchedRectangle.beginScope();
+            try {
+                MathUtil.scale(context.getMatrices(), x + (float) width / 2, y + (float) height / 2, scaleAnimation, () -> renderGuiRegionBlur(context));
+                MathUtil.scale(context.getMatrices(), x + (float) width / 2, y + (float) height / 2, scaleAnimation, () -> {
+                    boolean moduleDetailOpen = moduleDetailComponent.isOpen();
+                    boolean configsViewOpen = configsView.isOpen();
+                    boolean cosmeticsViewOpen = cosmeticsView.isOpen();
+                    boolean messengerViewOpen = messengerView.isOpen();
+                    boolean modalOpen = configShareModal.isOpen();
+                    boolean mouseOverWindow = windowManager.isMouseOverAnyWindow(overlayMouseX, overlayMouseY);
+                    boolean editorOpen = waypointEditor.isOpen();
+                    int routedMouseX = mouseOverWindow || modalOpen || editorOpen ? Integer.MIN_VALUE / 4 : overlayMouseX;
+                    int routedMouseY = mouseOverWindow || modalOpen || editorOpen ? Integer.MIN_VALUE / 4 : overlayMouseY;
+                    for (AbstractComponent component : components) {
+                        if ((moduleDetailOpen || configsViewOpen || cosmeticsViewOpen || messengerViewOpen)
+                                && (component == searchComponent || component == categoryContainerComponent
+                                || component == moduleDescriptionComponent)) {
+                            continue;
+                        }
+                        component.globalAlpha = alphaAnimation;
+                        component.render(context, routedMouseX, routedMouseY, delta);
                     }
-                    component.globalAlpha = alphaAnimation;
-                    component.render(context, routedMouseX, routedMouseY, delta);
-                }
-                if (configsViewOpen) {
-                    configsView.position(x, y).size(width, height);
-                    configsView.globalAlpha = alphaAnimation;
-                    configsView.render(context, routedMouseX, routedMouseY, delta);
-                }
-                if (cosmeticsViewOpen) {
-                    cosmeticsView.position(x, y).size(width, height);
-                    cosmeticsView.globalAlpha = alphaAnimation;
-                    cosmeticsView.render(context, routedMouseX, routedMouseY, delta);
-                }
-                windowManager.render(context, overlayMouseX, overlayMouseY, delta);
+                    if (configsViewOpen) {
+                        configsView.position(x, y).size(width, height);
+                        configsView.globalAlpha = alphaAnimation;
+                        configsView.render(context, routedMouseX, routedMouseY, delta);
+                    }
+                    if (cosmeticsViewOpen) {
+                        cosmeticsView.position(x, y).size(width, height);
+                        cosmeticsView.globalAlpha = alphaAnimation;
+                        cosmeticsView.render(context, routedMouseX, routedMouseY, delta);
+                    }
+                    if (messengerView.shouldRender()) {
+                        messengerView.position(x, y).size(width, height);
+                        messengerView.globalAlpha = alphaAnimation;
+                        messengerView.render(context, routedMouseX, routedMouseY, delta);
+                    }
+                    waypointEditor.position(x, y).size(width, height);
+                    waypointEditor.globalAlpha = alphaAnimation;
+                    waypointEditor.render(context, mouseOverWindow || modalOpen ? Integer.MIN_VALUE / 4 : overlayMouseX,
+                            mouseOverWindow || modalOpen ? Integer.MIN_VALUE / 4 : overlayMouseY, delta);
+                    windowManager.render(context, modalOpen ? Integer.MIN_VALUE / 4 : overlayMouseX,
+                            modalOpen ? Integer.MIN_VALUE / 4 : overlayMouseY, delta);
 
-                configShareModal.position(x, y).size(width, height);
-                configShareModal.globalAlpha = alphaAnimation;
-                configShareModal.render(context, overlayMouseX, overlayMouseY, delta);
-            });
+                    configShareModal.position(x, y).size(width, height);
+                    configShareModal.globalAlpha = alphaAnimation;
+                    configShareModal.render(context, overlayMouseX, overlayMouseY, delta);
+                });
+            } finally {
+                vorga.phazeclient.api.system.shape.batched.BatchedRectangle.endScope();
+            }
         } finally {
-            vorga.phazeclient.api.system.shape.batched.BatchedRectangle.endScope();
+            context.getMatrices().popMatrix();
         }
-        context.getMatrices().popMatrix();
+        renderCenterGuides(context);
+    }
 
-        vorga.phazeclient.implement.menu.components.implement.settings.ScaleSnapOverlay.render(context);
+    static void applyMenuTransform(org.joml.Matrix3x2fStack matrices, float overlayScale, float guiScale,
+                                   float centerX, float centerY) {
+        // The overlay is the outer coordinate space, including the GUI-scale pivot.
+        matrices.scale(overlayScale, overlayScale);
+        matrices.translate(centerX, centerY);
+        matrices.scale(guiScale, guiScale);
+        matrices.translate(-centerX, -centerY);
     }
 
     private void renderGuiRegionBlur(DrawContext context) {
@@ -223,7 +256,7 @@ public class MenuScreen extends Screen implements QuickImports {
                 .build());
     }
 
-    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
+    private void renderCenterGuides(DrawContext context) {
         Window currentWindow = MinecraftClient.getInstance().getWindow();
         int windowWidth = currentWindow != null ? currentWindow.getScaledWidth() : getOverlayViewportWidth();
         int windowHeight = currentWindow != null ? currentWindow.getScaledHeight() : getOverlayViewportHeight();
@@ -233,10 +266,8 @@ public class MenuScreen extends Screen implements QuickImports {
         boolean nearVerticalCenter = false;
 
         if (menuDragging) {
-            float mouseDragX = (float) (mouseX + dragOffsetX);
-            float mouseDragY = (float) (mouseY + dragOffsetY);
-            nearHorizontalCenter = Math.abs(mouseDragX - (windowWidth - width) / 2.0F) <= radius;
-            nearVerticalCenter = Math.abs(mouseDragY - (windowHeight - height) / 2.0F) <= radius;
+            nearHorizontalCenter = Math.abs(x - (getOverlayViewportWidth() - width) / 2.0F) <= radius;
+            nearVerticalCenter = Math.abs(y - (getOverlayViewportHeight() - height) / 2.0F) <= radius;
         }
 
         horizontalGuideAnimation.setDirection(nearHorizontalCenter ? FORWARDS : BACKWARDS);
@@ -245,7 +276,9 @@ public class MenuScreen extends Screen implements QuickImports {
         float horizontalAlpha = horizontalGuideAnimation.getOutputFloat() * 0.5F;
         float verticalAlpha = verticalGuideAnimation.getOutputFloat() * 0.5F;
 
-        RenderSystem.disableScissorForRenderTypeDraws();
+        if (horizontalAlpha <= 0.0F && verticalAlpha <= 0.0F) return;
+        // 1.21.11 uses GUI layers, not a z translation or an eager DrawContext flush.
+        context.createNewRootLayer();
         if (horizontalAlpha > 0.0F) {
             drawGuideLine(context, windowWidth / 2, 0, 1, windowHeight, horizontalAlpha);
         }
@@ -253,8 +286,6 @@ public class MenuScreen extends Screen implements QuickImports {
         if (verticalAlpha > 0.0F) {
             drawGuideLine(context, 0, windowHeight / 2, windowWidth, 1, verticalAlpha);
         }
-
-        super.renderBackground(context, mouseX, mouseY, delta);
     }
 
     protected void renderDarkening(DrawContext context) {
@@ -280,6 +311,11 @@ public class MenuScreen extends Screen implements QuickImports {
 
         closeConfigsView();
         closeCosmeticsView();
+        closeMessengerView();
+        waypointEditor.close();
+        activeTopTab = TopTab.MODS;
+        pendingTopTab = null;
+        topTabTransitionAnimation.setDirectionAndFinish(FORWARDS);
         category = ModuleCategory.ALL;
         Theme.getInstance().applyMenuTheme();
 
@@ -293,6 +329,7 @@ public class MenuScreen extends Screen implements QuickImports {
     }
 
     private void prewarmUiIconAtlas() {
+        UiMsdfIconAtlas.registerTexture("phaze:textures/menu/options_settings.png");
         UiMsdfIconAtlas.registerTexture("textures/settings.png");
         UiMsdfIconAtlas.registerTexture("textures/cross.png");
         UiMsdfIconAtlas.registerTexture("textures/trash.png");
@@ -307,13 +344,18 @@ public class MenuScreen extends Screen implements QuickImports {
         UiMsdfIconAtlas.registerTexture("textures/clock.png");
         UiMsdfIconAtlas.registerTexture("textures/reset.png");
         UiMsdfIconAtlas.registerTexture("phaze:textures/menu/phaze_brand.png");
+        UiMsdfIconAtlas.registerTexture("phaze:textures/cosmetics/category_all.png");
+        UiMsdfIconAtlas.registerTexture("phaze:textures/cosmetics/category_wings.png");
+        UiMsdfIconAtlas.registerTexture("phaze:textures/cosmetics/category_capes.png");
+        UiMsdfIconAtlas.registerTexture("phaze:textures/cosmetics/category_hats.png");
+        UiMsdfIconAtlas.registerTexture("phaze:textures/cosmetics/category_pets.png");
 
         Main main = Main.getInstance();
         if (main != null && main.getModuleProvider() != null) {
             for (Module module : main.getModuleProvider().getModules()) {
                 String texture = module.getIcon() != null
                         ? "phaze:textures/modules/" + module.getIcon()
-                        : "textures/modules/" + module.getCategory().getIdentifier() + ".png";
+                        : "phaze:textures/modules/hand.png";
                 UiMsdfIconAtlas.registerTexture(texture);
             }
         }
@@ -327,6 +369,7 @@ public class MenuScreen extends Screen implements QuickImports {
         }
         closeCosmeticsView();
         closeConfigsView();
+        closeMessengerView();
         windowManager.closeAll();
         SelectComponent.closeAllDropdowns();
         MultiSelectComponent.closeAllDropdowns();
@@ -355,17 +398,53 @@ public class MenuScreen extends Screen implements QuickImports {
     }
 
     public void openConfigImportModal() {
+        openConfigImportModal("");
+    }
+
+    public void openConfigImportModal(String code) {
         configShareModal.position(x, y).size(width, height);
-        configShareModal.openImport(configsView::refreshAfterImport);
+        configShareModal.openImport(configsView::refreshAfterImport, code);
     }
 
     public boolean isConfigShareModalOpen() {
         return configShareModal.isOpen();
     }
 
+    public void openWaypointEditor(String worldKey, vorga.phazeclient.implement.waypoints.Waypoint waypoint, boolean existing,
+                                   String serverLabel) {
+        prepareWaypointEditor();
+        waypointEditor.open(worldKey, waypoint, existing, serverLabel);
+    }
+
+    public void openWaypointSender(vorga.phazeclient.implement.waypoints.Waypoint draft,
+                                   vorga.phazeclient.implement.menu.components.implement.other.WaypointEditorModal.CardSubmit onSend) {
+        prepareWaypointEditor();
+        waypointEditor.openForSend(draft, onSend);
+    }
+
+    public void openWaypointCardEditor(String serverKey, String realm, vorga.phazeclient.implement.waypoints.Waypoint card,
+                                       String serverLabel,
+                                       vorga.phazeclient.implement.menu.components.implement.other.WaypointEditorModal.CardSubmit onSave,
+                                       Runnable onDelete) {
+        prepareWaypointEditor();
+        waypointEditor.openForCardEdit(serverKey, realm, card, serverLabel, onSave, onDelete);
+    }
+
+    private void prepareWaypointEditor() {
+        windowManager.closeAll();
+        SelectComponent.closeAllDropdowns();
+        MultiSelectComponent.closeAllDropdowns();
+        waypointEditor.position(x, y).size(width, height);
+    }
+
+    public boolean isWaypointEditorOpen() {
+        return waypointEditor.isOpen();
+    }
+
     public void openConfigsView() {
         closeModuleDetail();
         closeCosmeticsView();
+        closeMessengerView();
         configsView.position(x, y).size(width, height);
         configsView.open();
     }
@@ -375,12 +454,13 @@ public class MenuScreen extends Screen implements QuickImports {
     }
 
     public boolean isConfigsViewOpen() {
-        return configsView.isOpen();
+        return configsView.isActive();
     }
 
     public void openCosmeticsView() {
         closeModuleDetail();
         closeConfigsView();
+        closeMessengerView();
         cosmeticsView.position(x, y).size(width, height);
         cosmeticsView.open();
     }
@@ -391,6 +471,91 @@ public class MenuScreen extends Screen implements QuickImports {
 
     public boolean isCosmeticsViewOpen() {
         return cosmeticsView.isOpen();
+    }
+
+    public void openMessengerView() {
+        closeModuleDetail();
+        closeConfigsView();
+        closeCosmeticsView();
+        messengerView.position(x, y).size(width, height);
+        messengerView.open();
+    }
+
+    public void closeMessengerView() {
+        messengerView.close();
+    }
+
+    public boolean isMessengerViewOpen() {
+        return messengerView.isOpen();
+    }
+
+    public void requestTopTab(String label) {
+        TopTab requested = TopTab.fromLabel(label);
+        if (requested == null || (requested == activeTopTab && pendingTopTab == null)) {
+            return;
+        }
+
+        // Top-level pages switch immediately; their content is already ready.
+        pendingTopTab = null;
+        applyTopTab(requested);
+        activeTopTab = requested;
+        topTabTransitionAnimation.setDirectionAndFinish(FORWARDS);
+    }
+
+    public boolean isTopTabTransitioning() {
+        return false;
+    }
+
+    private void updateTopTabTransition() {
+        if (pendingTopTab == null || !topTabTransitionAnimation.isFinished(BACKWARDS)) {
+            return;
+        }
+
+        TopTab next = pendingTopTab;
+        pendingTopTab = null;
+        applyTopTab(next);
+        activeTopTab = next;
+        topTabTransitionAnimation.setDirection(FORWARDS);
+    }
+
+    private void applyTopTab(TopTab tab) {
+        switch (tab) {
+            case SETTINGS -> {
+                closeConfigsView();
+                closeCosmeticsView();
+                closeMessengerView();
+                openModuleDetail(Theme.getInstance());
+            }
+            case COSMETICS -> openCosmeticsView();
+            case CONFIGS -> openConfigsView();
+            case CHAT -> openMessengerView();
+            case MODS -> {
+                closeModuleDetail();
+                closeConfigsView();
+                closeCosmeticsView();
+                closeMessengerView();
+                setCategory(ModuleCategory.ALL);
+            }
+        }
+    }
+
+    private enum TopTab {
+        MODS,
+        SETTINGS,
+        COSMETICS,
+        CONFIGS,
+        CHAT;
+
+        private static TopTab fromLabel(String label) {
+            if (label == null) {
+                return null;
+            }
+            try {
+                return valueOf(label);
+            } catch (IllegalArgumentException ignored) {
+                return null;
+            }
+        }
     }
 
     public float getScaleAnimation() {
@@ -417,14 +582,25 @@ public class MenuScreen extends Screen implements QuickImports {
             windowManager.closeAll();
         }
 
-        if (shouldStartMenuDrag(overlayMouseX, overlayMouseY, button, insideMenu)) {
-            startMenuDrag(mouseX, mouseY);
+        if (waypointEditor.isOpen()) {
+            if (clickInsideWindow) windowManager.mouseClicked(overlayMouseX, overlayMouseY, button);
+            else waypointEditor.mouseClicked(overlayMouseX, overlayMouseY, button);
             return true;
         }
 
         if (configShareModal.isOpen()) {
             configShareModal.position(x, y).size(width, height);
             configShareModal.mouseClicked(overlayMouseX, overlayMouseY, button);
+            return true;
+        }
+
+        // Global navigation must not be swallowed by the currently open full-page view.
+        if (!clickInsideWindow && backgroundComponent.mouseClicked(overlayMouseX, overlayMouseY, button)) {
+            return true;
+        }
+
+        if (shouldStartMenuDrag(overlayMouseX, overlayMouseY, button, insideMenu)) {
+            startMenuDrag(mouseX, mouseY);
             return true;
         }
 
@@ -444,6 +620,17 @@ public class MenuScreen extends Screen implements QuickImports {
             cosmeticsView.position(x, y).size(width, height);
             if (cosmeticsView.mouseClicked(overlayMouseX, overlayMouseY, button)) return true;
             backgroundComponent.mouseClicked(overlayMouseX, overlayMouseY, button);
+            return true;
+        }
+
+        if (messengerView.isOpen()) {
+            messengerView.position(x, y).size(width, height);
+            if (messengerView.mouseClicked(overlayMouseX, overlayMouseY, button)) {
+                return true;
+            }
+            if (backgroundComponent.mouseClicked(overlayMouseX, overlayMouseY, button)) {
+                return true;
+            }
             return true;
         }
 
@@ -492,6 +679,18 @@ public class MenuScreen extends Screen implements QuickImports {
         updateOverlayMetrics();
         double overlayMouseX = toMenuCoordinateX(mouseX);
         double overlayMouseY = toMenuCoordinateY(mouseY);
+        if (configShareModal.isOpen()) {
+            configShareModal.mouseReleased(overlayMouseX, overlayMouseY, button);
+            return true;
+        }
+        if (waypointEditor.isOpen()) {
+            if (windowManager.isMouseOverAnyWindow(overlayMouseX, overlayMouseY)) {
+                windowManager.mouseReleased(overlayMouseX, overlayMouseY, button);
+            } else {
+                waypointEditor.mouseReleased(overlayMouseX, overlayMouseY, button);
+            }
+            return true;
+        }
         if (menuDragging && button == 0) {
             menuDragging = false;
             return true;
@@ -505,6 +704,11 @@ public class MenuScreen extends Screen implements QuickImports {
 
         if (cosmeticsView.isOpen()) {
             cosmeticsView.mouseReleased(overlayMouseX, overlayMouseY, button);
+            return true;
+        }
+
+        if (messengerView.isOpen()) {
+            messengerView.mouseReleased(overlayMouseX, overlayMouseY, button);
             return true;
         }
 
@@ -524,6 +728,16 @@ public class MenuScreen extends Screen implements QuickImports {
         double guiScale = MenuUiSettings.getInstance().getGuiScale();
         double overlayDeltaX = toOverlayCoordinate(deltaX) / guiScale;
         double overlayDeltaY = toOverlayCoordinate(deltaY) / guiScale;
+        if (configShareModal.isOpen()) {
+            configShareModal.mouseDragged(overlayMouseX, overlayMouseY, button, overlayDeltaX, overlayDeltaY);
+            return true;
+        }
+        if (waypointEditor.isOpen()) {
+            if (!windowManager.mouseDragged(overlayMouseX, overlayMouseY, button, overlayDeltaX, overlayDeltaY)) {
+                waypointEditor.mouseDragged(overlayMouseX, overlayMouseY, button, overlayDeltaX, overlayDeltaY);
+            }
+            return true;
+        }
         if (menuDragging) {
             float mouseDragX = (float) (overlayMouseX + dragOffsetX);
             float mouseDragY = (float) (overlayMouseY + dragOffsetY);
@@ -560,6 +774,11 @@ public class MenuScreen extends Screen implements QuickImports {
             return true;
         }
 
+        if (messengerView.isOpen()) {
+            messengerView.mouseDragged(overlayMouseX, overlayMouseY, button, overlayDeltaX, overlayDeltaY);
+            return true;
+        }
+
         if (!windowManager.mouseDragged(overlayMouseX, overlayMouseY, button, overlayDeltaX, overlayDeltaY)) {
             components.forEach(component -> component.mouseDragged(overlayMouseX, overlayMouseY, button, overlayDeltaX, overlayDeltaY));
         }
@@ -574,10 +793,15 @@ public class MenuScreen extends Screen implements QuickImports {
         updateOverlayMetrics();
         double overlayMouseX = toMenuCoordinateX(mouseX);
         double overlayMouseY = toMenuCoordinateY(mouseY);
+        if (configShareModal.isOpen()) {
+            configShareModal.mouseScrolled(overlayMouseX, overlayMouseY, vertical);
+            return true;
+        }
         if (moduleDetailComponent.isOpen()) {
             if (windowManager.mouseScrolled(overlayMouseX, overlayMouseY, vertical)) {
                 return true;
             }
+            if (backgroundComponent.mouseScrolled(overlayMouseX, overlayMouseY, vertical)) return true;
             moduleDetailComponent.mouseScrolled(overlayMouseX, overlayMouseY, vertical);
             return true;
         }
@@ -590,6 +814,10 @@ public class MenuScreen extends Screen implements QuickImports {
         if (cosmeticsView.isOpen()) {
             cosmeticsView.position(x, y).size(width, height);
             cosmeticsView.mouseScrolled(overlayMouseX, overlayMouseY, vertical);
+            return true;
+        }
+        if (messengerView.isOpen()) {
+            messengerView.mouseScrolled(overlayMouseX, overlayMouseY, vertical);
             return true;
         }
 
@@ -605,7 +833,14 @@ public class MenuScreen extends Screen implements QuickImports {
         int scanCode = input.scancode();
         int modifiers = input.modifiers();
 
-        if (configShareModal.isOpen() && configShareModal.keyPressed(keyCode, scanCode, modifiers)) {
+        if (waypointEditor.isOpen() && waypointEditor.keyPressed(keyCode, scanCode, modifiers)) {
+            return true;
+        }
+        if (configShareModal.isOpen()) {
+            configShareModal.keyPressed(keyCode, scanCode, modifiers);
+            return true;
+        }
+        if (messengerView.isOpen() && messengerView.keyPressed(keyCode, scanCode, modifiers)) {
             return true;
         }
         if (backgroundComponent.keyPressed(keyCode, scanCode, modifiers)) {
@@ -624,7 +859,7 @@ public class MenuScreen extends Screen implements QuickImports {
             return true;
         }
 
-        if (keyCode == GLFW.GLFW_KEY_F && (modifiers & GLFW.GLFW_MOD_CONTROL) != 0 && !SearchComponent.typing) {
+        if (keyCode == GLFW.GLFW_KEY_F && input.hasCtrlOrCmd() && !SearchComponent.typing) {
             SearchComponent.typing = true;
             searchComponent.setText("");
             searchComponent.setCursorPosition(0);
@@ -632,7 +867,7 @@ public class MenuScreen extends Screen implements QuickImports {
             return true;
         }
 
-        if (keyCode == GLFW.GLFW_KEY_V && (modifiers & GLFW.GLFW_MOD_CONTROL) != 0) {
+        if (keyCode == GLFW.GLFW_KEY_V && input.hasCtrlOrCmd()) {
             if (!windowManager.keyPressed(keyCode, scanCode, modifiers)) {
                 components.forEach(component -> component.keyPressed(keyCode, scanCode, modifiers));
             }
@@ -650,6 +885,10 @@ public class MenuScreen extends Screen implements QuickImports {
         int keyCode = input.key();
         int scanCode = input.scancode();
         int modifiers = input.modifiers();
+        if (configShareModal.isOpen()) {
+            configShareModal.keyReleased(keyCode, scanCode, modifiers);
+            return true;
+        }
         if (backgroundComponent.keyReleased(keyCode, scanCode, modifiers)) {
             return true;
         }
@@ -668,7 +907,14 @@ public class MenuScreen extends Screen implements QuickImports {
     public boolean charTyped(CharInput input) {
         char chr = (char) input.codepoint();
         int modifiers = input.modifiers();
-        if (configShareModal.isOpen() && configShareModal.charTyped(chr, modifiers)) {
+        if (waypointEditor.isOpen() && waypointEditor.charTyped(chr, modifiers)) {
+            return true;
+        }
+        if (configShareModal.isOpen()) {
+            configShareModal.charTyped(chr, modifiers);
+            return true;
+        }
+        if (messengerView.isOpen() && messengerView.charTyped(chr, modifiers)) {
             return true;
         }
         if (backgroundComponent.charTyped(chr, modifiers)) {
@@ -781,6 +1027,10 @@ public class MenuScreen extends Screen implements QuickImports {
         if (cosmeticsView.isOpen() && overlayMouseY >= y + HEADER_DRAG_HEIGHT) {
             return false;
         }
+        if ((messengerView.isOpen() || configsView.isActive())
+                && overlayMouseY >= y + HEADER_DRAG_HEIGHT) {
+            return false;
+        }
 
         boolean inHeaderDragZone = MathUtil.isHovered(
                 overlayMouseX,
@@ -809,6 +1059,12 @@ public class MenuScreen extends Screen implements QuickImports {
 
         if (moduleDetailComponent.isOpen()) {
             return moduleDetailComponent.isInteractiveHover(overlayMouseX, overlayMouseY);
+        }
+
+        if ((messengerView.isOpen() || configsView.isActive())
+                && MathUtil.isHovered(overlayMouseX, overlayMouseY, x, y + HEADER_DRAG_HEIGHT,
+                width, height - HEADER_DRAG_HEIGHT)) {
+            return true;
         }
 
         if (searchComponent.isHover(overlayMouseX, overlayMouseY)) {

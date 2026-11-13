@@ -74,6 +74,11 @@ public final class CursorManager {
     }
 
     public static void beginDrag(int shape) {
+        // GUI sliders renew the pin every frame; never change the OS
+        // cursor when the module or its Dynamic Cursor toggle is off.
+        if (!vorga.phazeclient.implement.features.modules.other.Animations.getInstance().isDynamicCursorEnabled()) {
+            return;
+        }
         if (dragOverrideShape == shape) {
             return;
         }
@@ -87,6 +92,9 @@ public final class CursorManager {
     }
 
     public static void notifyScroll(double horizontal, double vertical) {
+        if (!vorga.phazeclient.implement.features.modules.other.Animations.getInstance().isDynamicCursorEnabled()) {
+            return;
+        }
         double absH = Math.abs(horizontal);
         double absV = Math.abs(vertical);
         if (absH == 0.0 && absV == 0.0) {

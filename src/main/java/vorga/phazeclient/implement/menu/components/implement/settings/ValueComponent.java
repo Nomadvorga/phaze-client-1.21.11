@@ -32,7 +32,7 @@ public class ValueComponent extends AbstractSettingComponent {
     private static final float THUMB_OUTER = 8.0F;
     private static final float THUMB_INNER = 6.0F;
     private static final double SMOOTH_SPEED = 4.0;
-    private static final int ANIMATION_MS = 120;
+    private static final int ANIMATION_MS = SettingLabelState.WIDTH_TRANSITION_MS;
 
     private final ValueSetting setting;
 
@@ -89,16 +89,12 @@ public class ValueComponent extends AbstractSettingComponent {
 
         float textOffsetProgress = textOffsetAnimation.getOutputFloat();
         float animatedTextOffset = ResetIconComponent.getTextOffset() * textOffsetProgress;
+        label.setAnimatedTextInset(animatedTextOffset);
         float resetIconAlpha = resetIconAnimation.getOutputFloat();
 
         Matrix3x2fStack matrices = context.getMatrices();
 
-        float selectedBoxX = x + width - 108.0F;
-        String wrapped = StringUtil.wrap(setting.getLocalizedName(), (int) Math.max(28.0F, selectedBoxX - x - 20 - animatedTextOffset), 14);
-        String[] wrappedLines = wrapped.split("\n");
-        float lineHeight = LABEL_TEXT_SIZE + 1.5F;
-        float wrappedHeight = wrappedLines.length == 0 ? LABEL_TEXT_SIZE : wrappedLines.length * lineHeight - 1.5F;
-        height = Math.round(Math.max(26.0F, 20.0F + Math.max(0.0F, wrappedHeight - LABEL_TEXT_SIZE)));
+        height = ROW_HEIGHT;
         float hoverProgress = animatedCardHover(MathUtil.isHovered(mouseX, mouseY, x, y, width, height));
 
         computeSliderGeometry();
@@ -108,11 +104,12 @@ public class ValueComponent extends AbstractSettingComponent {
         isSliderHovered = MathUtil.isHovered(mouseX, mouseY, cachedSliderStartX - 4, centerY - 6, cachedSliderWidth + 8, 12);
         if (dragging) {
             vorga.phazeclient.api.system.cursor.CursorManager.beginDrag(vorga.phazeclient.api.system.cursor.CursorManager.SHAPE_HRESIZE);
+        } else if (isSliderHovered) {
+            vorga.phazeclient.api.system.cursor.CursorManager.requestHand();
         }
 
         renderSettingCard(context, 0.0f, hoverProgress);
 
-        renderLabelText(matrices, wrapped, x + 10 + animatedTextOffset, primaryText());
 
         float rawValue = setting.getValue();
         float stepSize = setting.getStep();
@@ -124,6 +121,9 @@ public class ValueComponent extends AbstractSettingComponent {
         }
         float valueWidth = MsdfFonts.bold().getWidth(value, VALUE_TEXT_SIZE);
         float valueX = cachedSliderStartX - valueWidth - 6;
+        label.renderMsdf(matrices, setting.getLocalizedName(), LABEL_TEXT_SIZE,
+                x + 10 + animatedTextOffset, centerY - LABEL_TEXT_SIZE / 2 + 1.1F, valueX - 8, y, height, primaryText());
+        updateLabelHover(mouseX, mouseY);
         MsdfRenderer.renderText(
                 MsdfFonts.bold(),
                 value,
@@ -183,6 +183,7 @@ public class ValueComponent extends AbstractSettingComponent {
         if (wasClicked) {
             playButtonClickSound();
             dragging = true;
+            vorga.phazeclient.api.system.cursor.CursorManager.beginDrag(vorga.phazeclient.api.system.cursor.CursorManager.SHAPE_HRESIZE);
             if (isGuiScaleSetting()) {
                 Theme.getInstance().beginGuiScaleAdjustment();
             }
@@ -195,8 +196,8 @@ public class ValueComponent extends AbstractSettingComponent {
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
         boolean wasDragging = dragging;
+        if (wasDragging) vorga.phazeclient.api.system.cursor.CursorManager.endDrag();
         dragging = false;
-        ScaleSnapOverlay.hide();
         if (wasDragging && isGuiScaleSetting()) {
             Theme.getInstance().endGuiScaleAdjustment();
         }
@@ -251,6 +252,14 @@ public class ValueComponent extends AbstractSettingComponent {
                 ? rangeMin
                 : (difference / cachedSliderWidth) * (rangeMax - rangeMin) + rangeMin;
 
+        float snapped2 = setting.applySnap(rawValue);
+        if (snapped2 != rawValue) {
+            rawValue = snapped2;
+            setting.setValue(setting.isInteger() ? (int) rawValue : rawValue);
+            previousValue = rawValue;
+            return;
+        }
+
         float step = setting.getStep();
         if (step <= 0.0F) step = 0.01F;
 
@@ -263,10 +272,6 @@ public class ValueComponent extends AbstractSettingComponent {
         float newValue = bd.floatValue();
         if (setting.isInteger()) newValue = (int) newValue;
 
-        if (isGuiScaleSetting()) {
-            ScaleSnapOverlay.show(newValue, Math.abs(newValue - 1.0F) < 0.001F,
-                    setting.getName() + " Scale");
-        }
 
         if (newValue != previousValue) {
             previousValue = newValue;

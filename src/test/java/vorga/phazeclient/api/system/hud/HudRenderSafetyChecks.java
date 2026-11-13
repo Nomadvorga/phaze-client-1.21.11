@@ -1,0 +1,175 @@
+package vorga.phazeclient.api.system.hud;
+
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.tree.*;
+import net.minecraft.client.render.BufferBuilder;
+import net.minecraft.client.render.BuiltBuffer;
+import net.minecraft.client.render.VertexFormats;
+
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Stream;
+
+/** Offline exception/state-boundary checks; real framebuffer checks live in RenderSafetyClientTest. */
+public final class HudRenderSafetyChecks {
+    private static int checks;
+    private static final String HUD = "vorga/phazeclient/api/system/hud/";
+    private static final String SHAPE = "vorga/phazeclient/api/system/shape/";
+    private static final String RENDERER = "vorga/phazeclient/implement/hud/CustomHudRenderer";
+
+    public static void main(String[] args) throws Exception {
+        passModes();
+        incompleteVertices();
+        shaderBeforeBuilder();
+        boundaries();
+        buffers();
+        lifecycle();
+        System.out.println("HUD render safety checks passed: " + checks);
+    }
+
+    private static void passModes() {
+        HudRenderModes state = new HudRenderModes();
+        check(!state.isBatchPass() && !state.isLogicOnlyPass(), "direct default");
+        for (HudRenderModes.Mode mode : HudRenderModes.Mode.values()) {
+            RuntimeException injected = new RuntimeException("injected " + mode);
+            try {
+                state.run(mode, () -> {
+                    check(state.isBatchPass() == (mode == HudRenderModes.Mode.CAPTURE || mode == HudRenderModes.Mode.GRADIENT), "batch mode");
+                    check(state.includesBlur() == (mode == HudRenderModes.Mode.CAPTURE), "capture contains static blur HUDs");
+                    check(state.isGradientPass() == (mode == HudRenderModes.Mode.GRADIENT), "live gradient mode");
+                    check(state.isLogicOnlyPass() == (mode == HudRenderModes.Mode.LOGIC), "logic-only mode");
+                    throw injected;
+                });
+                throw new AssertionError("failure not propagated");
+            } catch (RuntimeException e) {
+                check(e == injected, "preserves render exception");
+            }
+            check(!state.isBatchPass() && !state.isGradientPass() && !state.isLogicOnlyPass(), "failure restores direct mode");
+        }
+        state.run(HudRenderModes.Mode.CAPTURE, () -> {
+            try { state.run(HudRenderModes.Mode.GRADIENT, () -> { throw new IllegalArgumentException(); }); }
+            catch (IllegalArgumentException ignored) {}
+            check(state.isBatchPass() && state.includesBlur() && !state.isGradientPass(), "nested failure restores parent capture");
+        });
+    }
+
+    private static void shaderBeforeBuilder() throws Exception {
+        MethodNode rectangle = method(read(SHAPE + "implement/Rectangle"), "render");
+        check(calls(rectangle).stream().anyMatch(c -> c.owner.equals(SHAPE + "batched/BatchedRectangle") && c.name.equals("submit")),
+                "rectangle uses the immutable GPU pipeline and owned rectangle batch");
+        MethodNode submit = method(read(SHAPE + "batched/BatchedRectangle"), "submit");
+        check(index(submit, "getWindow") < index(submit, "beginBatch"), "invalid window checked before owned buffer allocation");
+        MethodNode blur = method(read(SHAPE + "implement/Blur"), "renderPreparedShape");
+        check(index(blur, "resolvePreparedBlurState") < index(blur, "begin"), "blur source validated before vertices");
+        check(calls(blur).stream().noneMatch(c -> c.name.equals("setShader")), "prepared GPU blur cannot abandon a builder on shader-null");
+    }
+
+    private static void boundaries() throws Exception {
+        ClassNode mixin = read("vorga/phazeclient/mixins/InGameHudMixin");
+        check(calls(method(mixin, "renderCustomHudFallback")).stream().anyMatch(c -> c.owner.equals(RENDERER) && c.name.equals("renderFrame")),
+                "vanilla TAIL hook delegates to the HUD frame");
+        ClassNode renderer = read(RENDERER);
+        MethodNode fallback = method(renderer, "renderFrame");
+        check(index(fallback, "draw") < index(fallback, "capture"), "flush vanilla before HUD state boundary");
+        check(hasFinally(fallback), "fallback always unwinds state and cached blur flags");
+        check(calls(fallback).stream().anyMatch(c -> c.name.equals("endCachedFrame")), "cached blur frame ends even on render failure");
+        check(Stream.of(mixin, renderer).flatMap(c -> c.fields.stream()).noneMatch(f -> List.of("inBatchPass", "inGradientPass", "batchIncludesBlur", "inLogicOnlyPass").contains(f.name)), "no unscoped global pass booleans");
+        MethodNode state = method(read(HUD + "Render2DState"), "join");
+        check(calls(state).stream().noneMatch(c -> c.name.startsWith("glGet")), "joining a managed pass never queries GL");
+        for (String name : List.of(SHAPE + "implement/Rectangle", SHAPE + "batched/BatchedRectangle")) {
+            check(read(name).methods.stream().flatMap(m -> calls(m).stream()).noneMatch(c -> c.name.startsWith("glGet")), "rectangles never directly query GL per primitive");
+        }
+        ClassNode blur = read(SHAPE + "implement/Blur");
+        MethodNode copy = method(blur, "blitFramebuffer");
+        check(hasFinally(copy), "blur framebuffer copy passes close even on failure");
+        check(calls(copy).stream().anyMatch(c -> c.name.equals("copyTextureToTexture")), "equal-size copies target explicit GPU attachments");
+        check(calls(copy).stream().noneMatch(c -> c.name.startsWith("gl")), "copies never depend on ambient GL framebuffer/scissor bindings");
+    }
+
+    private static void incompleteVertices() {
+        for (boolean batch : new boolean[]{false, true}) {
+            BufferBuilder broken = batch ? Render2DBuffers.beginBatch(VertexFormats.POSITION_COLOR)
+                    : Render2DBuffers.begin(VertexFormats.POSITION_COLOR);
+            broken.vertex(-123, -456, -789); // Deliberately omit COLOR; endNullable would throw.
+            if (batch) Render2DBuffers.discardBatch(); else Render2DBuffers.discardImmediate();
+            BufferBuilder clean = batch ? Render2DBuffers.beginBatch(VertexFormats.POSITION)
+                    : Render2DBuffers.begin(VertexFormats.POSITION);
+            clean.vertex(21, 22, 0); clean.vertex(21, 23, 0); clean.vertex(24, 23, 0); clean.vertex(24, 22, 0);
+            try (BuiltBuffer built = clean.end()) {
+                check(built.getDrawParameters().vertexCount() == 4, "new draw has only its own vertices");
+                check(built.getBuffer().getFloat(0) == 21, "discard rewinds incomplete, un-ended allocator bytes");
+            }
+        }
+        Render2DBuffers.cleanup();
+        Render2DBuffers.cleanup();
+    }
+
+    private static void buffers() throws Exception {
+        for (String name : List.of("HudBuffer", "BatchedHudBuffer")) {
+            MethodNode open = method(read(HUD + name), "openCapture");
+            check(hasFinally(open) || !open.tryCatchBlocks.isEmpty(), "capture allocation/clear failure closes scope");
+            String firstMutation = name.equals("BatchedHudBuffer") ? "ensureFramebufferInternal" : "clear";
+            check(index(open, "capture") < index(open, firstMutation) && index(open, firstMutation) < Integer.MAX_VALUE,
+                    "capture snapshots before clear/resize modifies GL");
+            check(calls(method(read(HUD + name), "endCapture")).stream().anyMatch(c -> c.name.equals("commit")), "legacy endCapture publishes explicitly");
+        }
+        MethodNode close = method(read(HUD + "HudCapture"), "close");
+        check(hasFinally(close), "capture close restores redirects even on flush failure");
+        check(calls(close).stream().anyMatch(c -> c.name.equals("discardPending")), "abort drops partial rectangle batch");
+        check(calls(close).stream().anyMatch(c -> c.name.equals("restoreRenderTargetFbHeight")), "capture restores parent raw framebuffer height");
+        MethodNode blit = method(read(HUD + "HudBlit"), "draw");
+        check(hasFinally(blit), "blit owns GPU/buffer cleanup");
+        check(calls(blit).stream().noneMatch(c -> c.name.equals("getFramebuffer")), "blit respects currently bound Exordium/framebuffer target");
+    }
+
+    private static void lifecycle() throws Exception {
+        MethodNode cleanup = method(read(HUD + "HudRenderLifecycle"), "cleanup");
+        check(cleanup.tryCatchBlocks.stream().anyMatch(t -> "java/lang/Error".equals(t.type))
+                        && calls(cleanup).stream().anyMatch(c -> c.name.equals("addSuppressed")),
+                "lifecycle aggregates failures while attempting every cache cleanup");
+        for (String owner : List.of(HUD + "HudBuffer", HUD + "BatchedHudBuffer", HUD + "HudRoundedContour",
+                SHAPE + "implement/Blur", SHAPE + "batched/BatchedRectangle", HUD + "Render2DBuffers")) {
+            check(referencesOwner(cleanup, owner), "unified lifecycle includes " + owner);
+        }
+    }
+
+    private static boolean referencesOwner(MethodNode method, String owner) {
+        if (calls(method).stream().anyMatch(c -> c.owner.equals(owner))) return true;
+        for (AbstractInsnNode instruction : method.instructions) {
+            if (instruction instanceof InvokeDynamicInsnNode dynamic) {
+                for (Object argument : dynamic.bsmArgs)
+                    if (argument instanceof org.objectweb.asm.Handle handle && handle.getOwner().equals(owner)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasFinally(MethodNode m) {
+        // javac emits Throwable handlers for try-with-resources and catch-all handlers for explicit finally.
+        return m.tryCatchBlocks.stream().anyMatch(t -> t.type == null || "java/lang/Throwable".equals(t.type));
+    }
+    private static int index(MethodNode m, String name) {
+        return calls(m).stream().filter(c -> c.name.equals(name)).mapToInt(m.instructions::indexOf).min().orElse(Integer.MAX_VALUE);
+    }
+    private static List<MethodInsnNode> calls(MethodNode m) {
+        List<MethodInsnNode> calls = new ArrayList<>();
+        for (AbstractInsnNode i : m.instructions) if (i instanceof MethodInsnNode call) calls.add(call);
+        return calls;
+    }
+    private static MethodNode method(ClassNode c, String name) {
+        return c.methods.stream().filter(m -> m.name.equals(name)).findFirst().orElseThrow();
+    }
+    private static ClassNode read(String name) throws Exception {
+        try (InputStream in = HudRenderSafetyChecks.class.getClassLoader().getResourceAsStream(name + ".class")) {
+            if (in == null) throw new AssertionError("Missing class " + name);
+            ClassNode c = new ClassNode();
+            new ClassReader(in).accept(c, 0);
+            return c;
+        }
+    }
+    private static void check(boolean success, String message) {
+        checks++;
+        if (!success) throw new AssertionError(message);
+    }
+}

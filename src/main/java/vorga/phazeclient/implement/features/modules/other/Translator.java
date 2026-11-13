@@ -1,5 +1,4 @@
 package vorga.phazeclient.implement.features.modules.other;
-
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -26,7 +25,6 @@ import vorga.phazeclient.api.feature.module.setting.implement.SelectSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.TextSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.ValueSetting;
 import vorga.phazeclient.mixins.ChatHudAccessor;
-
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -46,15 +44,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
 public final class Translator extends Module {
     @FunctionalInterface
     public interface BooleanLike {
         boolean isValue();
     }
-
     private static final Logger LOG = LoggerFactory.getLogger("PhazeTranslator");
-
     private static final Set<String> CLIENT_SYSTEM_KEY_PREFIXES = Set.of(
             "debug.",
             "screenshot.",
@@ -65,7 +60,6 @@ public final class Translator extends Module {
             "chat.cannotSend",
             "chat.disabled"
     );
-
     private static final Map<String, String> LANGUAGE_NAME_TO_CODE = Map.ofEntries(
             Map.entry("Russian",     "ru"),
             Map.entry("English",     "en"),
@@ -86,13 +80,11 @@ public final class Translator extends Module {
             Map.entry("Vietnamese",  "vi"),
             Map.entry("Indonesian",  "id")
     );
-
     private static final String[] LANGUAGE_NAMES = {
             "Russian", "English", "Ukrainian", "Belarusian", "Spanish", "French",
             "German", "Italian", "Portuguese", "Polish", "Turkish", "Chinese",
             "Japanese", "Korean", "Arabic", "Hindi", "Vietnamese", "Indonesian"
     };
-
     private static final Map<String, String> SLANG_EXPANSIONS = Map.ofEntries(
             Map.entry("lol",     "haha"),
             Map.entry("lmao",    "haha"),
@@ -183,10 +175,8 @@ public final class Translator extends Module {
             Map.entry("ffs",     "for fucks sake"),
             Map.entry("goat",    "greatest of all time"),
             Map.entry("hbd",     "happy birthday"),
-
             Map.entry("mend",    "Mending enchantment")
     );
-
     private static final Pattern SLANG_PATTERN = Pattern.compile(
             "\\b(" + SLANG_EXPANSIONS.keySet().stream()
                     .sorted((a, b) -> Integer.compare(b.length(), a.length()))
@@ -195,25 +185,18 @@ public final class Translator extends Module {
                     .orElse("") + ")\\b",
             Pattern.CASE_INSENSITIVE
     );
-
     private static final Pattern PLAYER_CHAT_HEURISTIC = Pattern.compile(
             "^.*?\\p{L}[\\p{L}\\p{N}_\\-]+\\s*[:\u00BB]\\s+.+$",
             Pattern.DOTALL
     );
-
     private static final Pattern HEADER_PATTERN = Pattern.compile("^(.*?[:>\u00BB])\\s+(.*)$", Pattern.DOTALL);
-
     private static final int CACHE_CAPACITY = 256;
-
     private static final int MAX_PENDING = 32;
-
     public final SectionSetting generalSection = new SectionSetting("General");
-
     public final SelectSetting targetLanguage = new SelectSetting(
             "Target Language",
             "Language to translate incoming chat into"
     ).value(LANGUAGE_NAMES).selected("Russian");
-
     public final MultiSelectSetting translationOptions = new MultiSelectSetting(
             "Translation Options",
             "Choose which translator behaviors stay enabled"
@@ -235,51 +218,37 @@ public final class Translator extends Module {
             "Expand Slang"
     );
     public final BooleanLike showSuffix = () -> translationOptions.isSelected("Show Direction");
-
     public final BooleanLike showOriginalOnHover = () -> translationOptions.isSelected("Show Original On Hover");
-
     public final BooleanLike skipNicknames = () -> translationOptions.isSelected("Skip Nicknames");
-
     public final BooleanLike skipSameLanguage = () -> translationOptions.isSelected("Skip Same Language");
-
     public final BooleanLike replaceOriginal = () -> translationOptions.isSelected("Replace Message");
-
     public final BooleanLike onlyPlayers = () -> translationOptions.isSelected("Only Players");
-
     public final BooleanLike autoDetectSource = () -> translationOptions.isSelected("Auto-Detect Source");
-
     public final SelectSetting sourceLanguage = new SelectSetting(
             "Source Language",
             "Source language (used only when Auto-Detect Source is off)"
     ).value(LANGUAGE_NAMES).selected("English")
      .visible(() -> !autoDetectSource.isValue());
-
     public final ValueSetting minLength = new ValueSetting(
             "Min Length",
             "Skip messages whose translatable body has fewer characters than this"
     ).range(1, 64).step(1).setValue(3);
-
     public final BooleanLike expandSlang = () -> translationOptions.isSelected("Expand Slang");
-
     public final SectionSetting providerSection = new SectionSetting("Provider");
-
     public final SelectSetting provider = new SelectSetting(
             "Provider",
             "Translation backend. Google = direct mobile endpoint (fast, free). Apify = run actor through Apify API (slower, uses your token)."
     ).value("Google", "Apify").selected("Google");
-
     public final TextSetting apifyToken = new TextSetting(
             "Apify Token",
             "Personal API token for api.apify.com (used only when Provider=Apify)"
     ).setText("")
      .visible(() -> provider.isSelected("Apify"));
-
     public final TextSetting apifyActor = new TextSetting(
             "Apify Actor",
             "Actor ID in username~actorname form"
     ).setText("web.harvester~google-translator")
      .visible(() -> provider.isSelected("Apify"));
-
     @SuppressWarnings("serial")
     private final Map<String, String> cache = new LinkedHashMap<>(64, 0.75f, true) {
         @Override
@@ -287,23 +256,17 @@ public final class Translator extends Module {
             return size() > CACHE_CAPACITY;
         }
     };
-
     private final ExecutorService executor = Executors.newFixedThreadPool(2, r -> {
         Thread t = new Thread(r, "phaze-translator");
         t.setDaemon(true);
         return t;
     });
-
     private final AtomicInteger pending = new AtomicInteger(0);
-
     private boolean bypass = false;
-
     private static final Translator INSTANCE = new Translator();
-
     public static Translator getInstance() {
         return INSTANCE;
     }
-
     private Translator() {
         super("translator", "Translator", ModuleCategory.OTHER);
         targetLanguage.setFullWidth(true);
@@ -316,46 +279,36 @@ public final class Translator extends Module {
         setup(generalSection, targetLanguage, translationOptions, sourceLanguage, minLength,
                 providerSection, provider, apifyToken, apifyActor);
     }
-
     @Override
     public String getDescription() {
         return "Auto-translate incoming chat messages and post the translation as a new row below the original";
     }
-
     @Override
     public String getIcon() {
         return "translator.png";
     }
-
     @Override
     public float getIconSize() {
         return 21.0F;
     }
-
     public boolean isBypassActive() {
         return bypass;
     }
-
     public void onIncomingChat(Text message, MessageSignatureData signature) {
         if (!isEnabled() || bypass || message == null) {
             return;
         }
-
         if (isClientSystemMessage(message)) {
             return;
         }
-
         if (onlyPlayers.isValue() && !isPlayerChat(message, signature)) {
             return;
         }
-
         String raw = message.getString();
         if (raw == null || raw.isEmpty()) {
             return;
         }
-
         lastIncomingRaw = raw;
-
         String header;
         String body;
         if (skipNicknames.isValue()) {
@@ -364,7 +317,6 @@ public final class Translator extends Module {
                 header = matcher.group(1) + " ";
                 body = matcher.group(2);
             } else {
-
                 header = "";
                 body = raw;
             }
@@ -372,32 +324,26 @@ public final class Translator extends Module {
             header = "";
             body = raw;
         }
-
         if (body == null) {
             return;
         }
         body = body.trim();
-
         if (translationWeight(body) < (int) minLength.getValue()) {
             return;
         }
-
         if (isMostlySymbolic(body)) {
             return;
         }
-
         String target = languageNameToCode(targetLanguage.getSelected());
         if (target == null || target.isEmpty()) {
             return;
         }
-
         String cacheKey = target + "|" + body;
         String cached;
         synchronized (cache) {
             cached = cache.get(cacheKey);
         }
         if (cached != null) {
-
             int sep = cached.indexOf('|');
             if (sep >= 0) {
                 String detected = cached.substring(0, sep);
@@ -409,7 +355,6 @@ public final class Translator extends Module {
                 return;
             }
         }
-
         if (pending.get() >= MAX_PENDING) {
             return;
         }
@@ -419,7 +364,6 @@ public final class Translator extends Module {
         final String headerF = header;
         final String bodyF = body;
         final String targetF = target;
-
         final String sourceF = autoDetectSource.isValue()
                 ? "auto"
                 : languageNameToCode(sourceLanguage.getSelected());
@@ -433,11 +377,8 @@ public final class Translator extends Module {
             }
         });
     }
-
     private void translateAndPost(Text original, String raw, String header, String body, String source, String target, String cacheKey) {
-
         String apiInput = shouldExpandSlang(body, source) ? applySlangExpansion(body) : body;
-
         String[] result;
         if (provider.isSelected("Apify")) {
             result = translateApify(apiInput, source, target);
@@ -452,23 +393,18 @@ public final class Translator extends Module {
         if (translation == null || translation.isEmpty()) {
             return;
         }
-
         synchronized (cache) {
             cache.put(cacheKey, detected + "|" + translation);
         }
-
         if (skipSameLanguage.isValue() && detected.equalsIgnoreCase(target)) {
             return;
         }
-
         if (translation.trim().equalsIgnoreCase(body.trim())) {
             return;
         }
-
         String displayDetected = autoDetectSource.isValue() ? detected : source;
         postTranslation(original, raw, header, translation, displayDetected, target);
     }
-
     private void postTranslation(Text original, String originalRaw, String header, String translation, String detectedSrc, String target) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null) {
@@ -479,12 +415,10 @@ public final class Translator extends Module {
             if (chat == null) {
                 return;
             }
-
             String suffix = showSuffix.isValue()
                     ? " (" + (detectedSrc == null || detectedSrc.isEmpty() ? "auto" : detectedSrc) + "2" + target + ")"
                     : null;
             MutableText row = buildStyledTranslationRow(original, header, translation, suffix);
-
             bypass = true;
             try {
                 if (replaceOriginal.isValue() && originalRaw != null) {
@@ -494,16 +428,13 @@ public final class Translator extends Module {
             } finally {
                 bypass = false;
             }
-
             vorga.phazeclient.api.system.hud.ExordiumAnimationBridge
                     .requestImmediateCapture(
                             vorga.phazeclient.api.system.hud.ExordiumAnimationBridge.CHAT);
         });
     }
-
     private MutableText buildStyledTranslationRow(Text original, String header, String translation, String suffix) {
         if (original == null) {
-
             MutableText row = Text.empty();
             if (header != null && !header.isEmpty()) {
                 row.append(Text.literal(header));
@@ -512,61 +443,45 @@ public final class Translator extends Module {
             if (suffix != null) {
                 row.append(Text.literal(suffix).formatted(Formatting.GRAY, Formatting.ITALIC));
             }
-
             return row;
         }
-
         String raw = original.getString();
-
         int bodyStart = header == null ? 0 : header.length();
-
         if (bodyStart < 0 || bodyStart > raw.length()) {
             bodyStart = 0;
         }
         final int bodyStartF = bodyStart;
         final int bodyEndF = raw.length();
-
         final MutableText result = Text.empty();
         final int[] cursor = {0};
         final boolean[] translationInserted = {false};
-
         original.visit((StringVisitable.StyledVisitor<Object>) (style, str) -> {
             int segStart = cursor[0];
             int segEnd = segStart + str.length();
             cursor[0] = segEnd;
-
             int prefixLen = Math.max(0, Math.min(str.length(), bodyStartF - segStart));
-
             int suffixStart = Math.min(str.length(), Math.max(0, bodyEndF - segStart));
-
             if (prefixLen > 0) {
                 String prefix = str.substring(0, prefixLen);
                 result.append(Text.literal(prefix).setStyle(style));
             }
-
             boolean bodyOverlaps = segStart < bodyEndF && segEnd > bodyStartF;
             if (bodyOverlaps && !translationInserted[0]) {
-
                 result.append(Text.literal(translation).setStyle(style));
                 translationInserted[0] = true;
             }
-
             if (suffixStart < str.length()) {
                 String tail = str.substring(suffixStart);
                 result.append(Text.literal(tail).setStyle(style));
             }
             return Optional.empty();
         }, Style.EMPTY);
-
         if (!translationInserted[0]) {
             result.append(Text.literal(translation));
         }
-
         if (suffix != null) {
-
             result.append(Text.literal(suffix).formatted(Formatting.GRAY, Formatting.ITALIC));
         }
-
         if (showOriginalOnHover.isValue()) {
             HoverEvent hover = buildOriginalHover(original);
             if (hover != null) {
@@ -577,7 +492,6 @@ public final class Translator extends Module {
         }
         return result;
     }
-
     private static HoverEvent buildOriginalHover(Text original) {
         if (original == null) {
             return null;
@@ -590,52 +504,42 @@ public final class Translator extends Module {
                 .append(Text.literal("Original message:").formatted(Formatting.GRAY, Formatting.ITALIC))
                 .append(Text.literal("\n"))
                 .append(original);
-
         return new HoverEvent.ShowText(tooltip);
     }
-
     private static String languageNameToCode(String name) {
         if (name == null || name.isEmpty()) return "ru";
         String code = LANGUAGE_NAME_TO_CODE.get(name);
         if (code != null) return code;
-
         return name.trim().toLowerCase();
     }
-
     private static boolean isPlayerChat(Text message, MessageSignatureData signature) {
         if (signature != null) return true;
         if (message == null) return false;
         String raw = message.getString();
         if (raw == null || raw.isEmpty()) return false;
-
         if (raw.startsWith("<")) {
             int close = raw.indexOf("> ");
             if (close > 1 && close < raw.length() - 2) {
                 String name = raw.substring(1, close);
-
                 if (!name.isEmpty() && name.indexOf('<') < 0 && containsLetter(name)) {
                     return true;
                 }
             }
         }
-
         return PLAYER_CHAT_HEURISTIC.matcher(raw).matches();
     }
-
     private static boolean containsLetter(String s) {
         for (int i = 0; i < s.length(); i++) {
             if (Character.isLetter(s.codePointAt(i))) return true;
         }
         return false;
     }
-
     private boolean shouldExpandSlang(String body, String source) {
         if (!expandSlang.isValue()) return false;
         if (body == null || body.isEmpty()) return false;
         if (!isAsciiLettersOnly(body)) return false;
         return "auto".equals(source) || "en".equalsIgnoreCase(source);
     }
-
     private static boolean isAsciiLettersOnly(String s) {
         for (int i = 0; i < s.length(); ) {
             int cp = s.codePointAt(i);
@@ -647,7 +551,6 @@ public final class Translator extends Module {
         }
         return true;
     }
-
     private static String applySlangExpansion(String input) {
         Matcher m = SLANG_PATTERN.matcher(input);
         StringBuilder out = new StringBuilder(input.length() + 16);
@@ -659,7 +562,6 @@ public final class Translator extends Module {
         m.appendTail(out);
         return out.toString();
     }
-
     private static boolean isClientSystemMessage(Text message) {
         if (message == null) {
             return false;
@@ -679,12 +581,9 @@ public final class Translator extends Module {
         }
         return false;
     }
-
     private String lastIncomingRaw;
-
     private final java.util.concurrent.ConcurrentHashMap<String, Long> storedLineTicks =
             new java.util.concurrent.ConcurrentHashMap<>();
-
     public void captureStoredLine(int creationTick) {
         String raw = lastIncomingRaw;
         lastIncomingRaw = null;
@@ -696,7 +595,6 @@ public final class Translator extends Module {
         }
         storedLineTicks.put(raw, (long) creationTick);
     }
-
     private void removeOriginal(ChatHud chat, String originalRaw) {
         ChatHudAccessor accessor = (ChatHudAccessor) chat;
         List<ChatHudLine> messages = accessor.phaze$getMessages();
@@ -714,7 +612,6 @@ public final class Translator extends Module {
             }
         }
         if (targetIdx < 0 || targetLine == null) {
-
             Long tick = storedLineTicks.remove(originalRaw);
             if (tick != null) {
                 for (int i = 0; i < messages.size(); i++) {
@@ -730,7 +627,6 @@ public final class Translator extends Module {
         if (targetIdx < 0 || targetLine == null) {
             return;
         }
-
         messages.remove(targetIdx);
         List<ChatHudLine.Visible> visible = accessor.phaze$getVisibleMessages();
         if (visible != null && !visible.isEmpty()) {
@@ -738,11 +634,9 @@ public final class Translator extends Module {
             visible.removeIf(v -> v != null && v.addedTime() == removedTick);
         }
     }
-
     private String[] translateGoogleDirect(String text, String source, String target) {
         try {
             String encoded = URLEncoder.encode(text, StandardCharsets.UTF_8);
-
             String slParam = (source == null || source.isEmpty()) ? "auto" : source;
             String urlStr = "https://translate.googleapis.com/translate_a/single"
                     + "?client=gtx"
@@ -757,14 +651,12 @@ public final class Translator extends Module {
                 conn.setConnectTimeout(5_000);
                 conn.setReadTimeout(8_000);
                 conn.setRequestProperty("Accept", "application/json");
-
                 conn.setRequestProperty(
                         "User-Agent",
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                         + "AppleWebKit/537.36 (KHTML, like Gecko) "
                         + "Chrome/126.0.0.0 Safari/537.36");
                 conn.setInstanceFollowRedirects(true);
-
                 int status = conn.getResponseCode();
                 if (status != 200) {
                     LOG.warn("Google Translate returned HTTP {}", status);
@@ -776,7 +668,6 @@ public final class Translator extends Module {
                     return null;
                 }
                 JsonArray root = parsed.getAsJsonArray();
-
                 StringBuilder sb = new StringBuilder();
                 if (root.size() > 0 && root.get(0).isJsonArray()) {
                     JsonArray chunks = root.get(0).getAsJsonArray();
@@ -791,7 +682,6 @@ public final class Translator extends Module {
                     }
                 }
                 String translated = sb.toString();
-
                 String detected = "auto";
                 if (root.size() >= 3 && root.get(2).isJsonPrimitive()) {
                     detected = root.get(2).getAsString();
@@ -805,7 +695,6 @@ public final class Translator extends Module {
             return null;
         }
     }
-
     private String[] translateApify(String text, String source, String target) {
         try {
             String token = apifyToken.getText();
@@ -813,7 +702,6 @@ public final class Translator extends Module {
             if (token == null || token.isEmpty() || actor == null || actor.isEmpty()) {
                 return null;
             }
-
             String urlStr = "https://api.apify.com/v2/acts/" + actor
                     + "/run-sync-get-dataset-items?token=" + URLEncoder.encode(token, StandardCharsets.UTF_8);
             URL url = URI.create(urlStr).toURL();
@@ -821,12 +709,10 @@ public final class Translator extends Module {
             try {
                 conn.setRequestMethod("POST");
                 conn.setDoOutput(true);
-
                 conn.setConnectTimeout(15_000);
                 conn.setReadTimeout(60_000);
                 conn.setRequestProperty("Accept", "application/json");
                 conn.setRequestProperty("Content-Type", "application/json");
-
                 String slField = (source == null || source.isEmpty()) ? "auto" : source;
                 String payload = "{"
                         + "\"text\":" + jsonString(text) + ","
@@ -836,7 +722,6 @@ public final class Translator extends Module {
                 try (OutputStream os = conn.getOutputStream()) {
                     os.write(payload.getBytes(StandardCharsets.UTF_8));
                 }
-
                 int status = conn.getResponseCode();
                 if (status / 100 != 2) {
                     LOG.warn("Apify returned HTTP {}", status);
@@ -851,7 +736,6 @@ public final class Translator extends Module {
                 if (items.size() == 0 || !items.get(0).isJsonObject()) {
                     return null;
                 }
-
                 JsonObject item = items.get(0).getAsJsonObject();
                 String translated = item.has("translatedText") && item.get("translatedText").isJsonPrimitive()
                         ? item.get("translatedText").getAsString()
@@ -871,7 +755,6 @@ public final class Translator extends Module {
             return null;
         }
     }
-
     private static String jsonString(String s) {
         StringBuilder sb = new StringBuilder(s.length() + 2);
         sb.append('"');
@@ -894,7 +777,6 @@ public final class Translator extends Module {
         sb.append('"');
         return sb.toString();
     }
-
     private static String shortenLanguageName(String full) {
         if (full == null) return "auto";
         String f = full.trim().toLowerCase();
@@ -910,7 +792,6 @@ public final class Translator extends Module {
             case "portuguese":         return "pt";
             case "polish":             return "pl";
             case "turkish":            return "tr";
-
             case "chinese":
             case "chinese (simplified)":
             case "chinese (traditional)": return "zh-CN";
@@ -926,7 +807,6 @@ public final class Translator extends Module {
                 return f.length() <= 3 ? f : f.substring(0, 3);
         }
     }
-
     private static String readAll(InputStream in) throws Exception {
         StringBuilder sb = new StringBuilder();
         try (BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
@@ -936,7 +816,6 @@ public final class Translator extends Module {
             while ((n = r.read(buf)) != -1) {
                 sb.append(buf, 0, n);
                 total += n;
-
                 if (total > 262_144) {
                     break;
                 }
@@ -944,7 +823,6 @@ public final class Translator extends Module {
         }
         return sb.toString();
     }
-
     private static boolean isMostlySymbolic(String text) {
         if (text == null || text.isEmpty()) return true;
         int letterWeight = 0;
@@ -960,7 +838,6 @@ public final class Translator extends Module {
         }
         return true;
     }
-
     private static int translationWeight(String s) {
         int total = 0;
         for (int i = 0; i < s.length(); ) {
@@ -970,7 +847,6 @@ public final class Translator extends Module {
         }
         return total;
     }
-
     private static boolean isCjkLike(int cp) {
         Character.UnicodeBlock b = Character.UnicodeBlock.of(cp);
         return b == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS

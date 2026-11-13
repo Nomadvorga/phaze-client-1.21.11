@@ -112,8 +112,14 @@ public final class ArmorHud extends Module {
     private float hudX = DEFAULT_HUD_X;
     private float hudY = DEFAULT_HUD_Y;
     private float hudScale = DEFAULT_HUD_SCALE;
-    private float hudXRatio = Float.NaN;
-    private float hudYRatio = Float.NaN;
+    private int hudRefWidth = -1, hudRefHeight = -1;
+    private float hudLayoutWidth, hudLayoutHeight;
+    public void setHudLayoutSize(float width, float height) {
+        hudLayoutWidth = Float.isFinite(width) ? Math.max(0, width) : 0;
+        hudLayoutHeight = Float.isFinite(height) ? Math.max(0, height) : 0;
+    }
+    public float getHudLayoutWidth() { return hudLayoutWidth; }
+    public float getHudLayoutHeight() { return hudLayoutHeight; }
 
     public static ArmorHud getInstance() {
         return INSTANCE;
@@ -166,24 +172,29 @@ public final class ArmorHud extends Module {
     }
 
     public float getHudX() {
+        resolveForCurrentScreen();
         return hudX;
     }
 
     public void setHudX(float hudX) {
+        resolveForCurrentScreen();
         this.hudX = hudX;
         syncStoredHudRatios();
     }
 
     public float getHudY() {
+        resolveForCurrentScreen();
         return hudY;
     }
 
     public void setHudY(float hudY) {
+        resolveForCurrentScreen();
         this.hudY = hudY;
         syncStoredHudRatios();
     }
 
     public void resetHudTransform() {
+        setHudLayoutSize(0, 0);
         this.hudX = DEFAULT_HUD_X;
         this.hudY = DEFAULT_HUD_Y;
         this.hudScale = DEFAULT_HUD_SCALE;
@@ -199,8 +210,7 @@ public final class ArmorHud extends Module {
     }
 
     public void setHudScale(float hudScale) {
-        this.hudScale = HudScaleLimits.normalize(hudScale);
-        syncStoredHudRatios();
+        this.hudScale = HudScaleLimits.clamp(hudScale);
     }
 
     public float getMinHudScale() {
@@ -238,7 +248,7 @@ public final class ArmorHud extends Module {
 
     public int getResolvedBackgroundColor(net.minecraft.client.MinecraftClient client) {
         if (isVanillaPreset()) {
-            return client.options.getTextBackgroundColor(0.3F);
+            return client.options.getTextBackgroundColor(0.5F);
         }
         if (isCustomColorPreset()) {
             return applyColorOptions(customBackgroundColor.getColor());
@@ -348,40 +358,36 @@ public final class ArmorHud extends Module {
     }
 
     public float getHudXRatio() {
-        if (!Float.isNaN(hudXRatio)) {
-            return hudXRatio;
-        }
         net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         if (client == null || client.getWindow() == null) {
             return 0.0f;
         }
-        return MathHelper.clamp(hudX / Math.max(1.0f, client.getWindow().getScaledWidth()), 0.0f, 1.0f);
+        resolveForCurrentScreen();
+        return MathHelper.clamp(hudX / Math.max(1.0f, client.getWindow().getWidth()), 0.0f, 1.0f);
     }
 
     public float getHudYRatio() {
-        if (!Float.isNaN(hudYRatio)) {
-            return hudYRatio;
-        }
         net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         if (client == null || client.getWindow() == null) {
             return 0.0f;
         }
-        return MathHelper.clamp(hudY / Math.max(1.0f, client.getWindow().getScaledHeight()), 0.0f, 1.0f);
+        resolveForCurrentScreen();
+        return MathHelper.clamp(hudY / Math.max(1.0f, client.getWindow().getHeight()), 0.0f, 1.0f);
     }
 
     public void setHudXRatio(float ratio) {
-        this.hudXRatio = MathHelper.clamp(ratio, 0.0f, 1.0f);
         net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         if (client != null && client.getWindow() != null) {
-            this.hudX = this.hudXRatio * Math.max(1, client.getWindow().getScaledWidth());
+            this.hudX = MathHelper.clamp(ratio, 0, 1) * Math.max(1, client.getWindow().getWidth());
+            syncStoredHudRatios();
         }
     }
 
     public void setHudYRatio(float ratio) {
-        this.hudYRatio = MathHelper.clamp(ratio, 0.0f, 1.0f);
         net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         if (client != null && client.getWindow() != null) {
-            this.hudY = this.hudYRatio * Math.max(1, client.getWindow().getScaledHeight());
+            this.hudY = MathHelper.clamp(ratio, 0, 1) * Math.max(1, client.getWindow().getHeight());
+            syncStoredHudRatios();
         }
     }
 
@@ -390,9 +396,35 @@ public final class ArmorHud extends Module {
         if (client == null || client.getWindow() == null) {
             return;
         }
-        float screenWidth = Math.max(1.0f, client.getWindow().getScaledWidth());
-        float screenHeight = Math.max(1.0f, client.getWindow().getScaledHeight());
-        this.hudXRatio = MathHelper.clamp(this.hudX / screenWidth, 0.0f, 1.0f);
-        this.hudYRatio = MathHelper.clamp(this.hudY / screenHeight, 0.0f, 1.0f);
+        hudRefWidth = client.getWindow().getWidth();
+        hudRefHeight = client.getWindow().getHeight();
+    }
+    private void resolveForCurrentScreen() {
+        var client = net.minecraft.client.MinecraftClient.getInstance();
+        if (client == null || client.getWindow() == null) return;
+        int width = client.getWindow().getWidth(), height = client.getWindow().getHeight();
+        if (width <= 0 || height <= 0) return;
+        if (hudRefWidth <= 0 || hudRefHeight <= 0) { syncStoredHudRatios(); return; }
+        if (width == hudRefWidth && height == hudRefHeight) return;
+        hudX = vorga.phazeclient.api.system.hud.HudPositionMath.rescale(hudX, hudRefWidth, width, hudLayoutWidth);
+        hudY = vorga.phazeclient.api.system.hud.HudPositionMath.rescale(hudY, hudRefHeight, height, hudLayoutHeight);
+        hudRefWidth = width; hudRefHeight = height;
+    }
+    public void setHudPosition(float x, float y, int refWidth, int refHeight) {
+        hudX = x; hudY = y;
+        if (refWidth > 0 && refHeight > 0) { hudRefWidth = refWidth; hudRefHeight = refHeight; }
+        else syncStoredHudRatios();
+    }
+    public void setHudPositionRatio(float xRatio, float yRatio) {
+        var client = net.minecraft.client.MinecraftClient.getInstance();
+        if (client == null || client.getWindow() == null) return;
+        hudX = MathHelper.clamp(xRatio, 0, 1) * Math.max(1, client.getWindow().getWidth());
+        hudY = MathHelper.clamp(yRatio, 0, 1) * Math.max(1, client.getWindow().getHeight());
+        syncStoredHudRatios();
+    }
+    public int getHudRefWidth() { return hudRefWidth; }
+    public int getHudRefHeight() { return hudRefHeight; }
+    public void setHudReference(int width, int height) {
+        hudRefWidth = width; hudRefHeight = height;
     }
 }

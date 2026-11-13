@@ -17,7 +17,6 @@ import vorga.phazeclient.api.feature.module.setting.implement.*;
 import vorga.phazeclient.api.system.animation.Animation;
 import vorga.phazeclient.api.system.animation.Direction;
 import vorga.phazeclient.api.system.animation.implement.DecelerateAnimation;
-import vorga.phazeclient.api.system.font.Fonts;
 import vorga.phazeclient.api.system.font.msdf.MsdfFonts;
 import vorga.phazeclient.api.system.font.msdf.MsdfRenderer;
 import vorga.phazeclient.api.system.shape.ShapeProperties;
@@ -35,7 +34,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
-import static vorga.phazeclient.api.system.font.Fonts.Type.INTER_BOLD;
 
 @Getter
 public class ModuleComponent extends AbstractComponent {
@@ -45,6 +43,18 @@ public class ModuleComponent extends AbstractComponent {
     private static final float ROW_TEXT_SIZE = 6.45F;
     private static final float BIND_TEXT_SIZE = 5.8F;
     private static final float CARD_INSET = 1.3F;
+    private static final float ROW_INSET = CARD_INSET - 1.0F;
+    private static final float STATE_ROW_RADIUS = 7.0F;
+    private static final Identifier OPTIONS_ICON = Identifier.of("phaze", "textures/menu/options_settings.png");
+    private static final float OPTIONS_ICON_INK_SIZE = 7.6F;
+    private static final float ICON_CENTER_Y = 22.5F;
+    private static final float ICON_INK_SIZE = 14.5F;
+    private static final float ICON_INK_MAX = 17.0F;
+    private static final float ICON_FALLBACK_SIZE = 16.0F;
+    private String iconSource;
+    private String iconTexture;
+    private Identifier iconId;
+    private float iconQuadHeight;
     private static final float STANDALONE_OPTIONS_RADIUS = 5.2F;
     private static final float OPTIONS_ROW_HEIGHT = 18.0F;
     private static final float ENABLED_ROW_HEIGHT = 18.0F;
@@ -119,16 +129,13 @@ public class ModuleComponent extends AbstractComponent {
         float optionsY = y + baseHeight - (showStateRow ? (OPTIONS_ROW_HEIGHT + ENABLED_ROW_HEIGHT) : OPTIONS_ROW_HEIGHT);
 
         if (hasSettings()) {
-            boolean standaloneRow = !showStateRow;
-            float rowX = standaloneRow ? x : x + CARD_INSET;
-            float rowWidth = standaloneRow ? width : width - CARD_INSET * 2.0F;
-            boolean rowHovered = MathUtil.isHovered(mouseX, mouseY, rowX, optionsY, rowWidth, OPTIONS_ROW_HEIGHT);
+            boolean rowHovered = isOptionsRowHovered(mouseX, mouseY);
             optionsHoverAnimation.setDirection(rowHovered ? Direction.FORWARDS : Direction.BACKWARDS);
         }
 
         if (showStateRow) {
             float enabledY = optionsY + OPTIONS_ROW_HEIGHT;
-            boolean stateRowHovered = MathUtil.isHovered(mouseX, mouseY, x, enabledY, width, ENABLED_ROW_HEIGHT);
+            boolean stateRowHovered = isStateRowHovered(mouseX, mouseY);
             stateRowHoverAnimation.setDirection(stateRowHovered ? Direction.FORWARDS : Direction.BACKWARDS);
             if (stateRowHovered && module.isServerLocked()) {
                 vorga.phazeclient.api.system.cursor.CursorManager.requestNotAllowed();
@@ -173,9 +180,12 @@ public class ModuleComponent extends AbstractComponent {
             try {
                 context.getMatrices().pushMatrix();
 
-                context.getMatrices().translate(-x, -y);
-                renderImmediate(context, mouseX, mouseY, delta, inSearchMode);
-                context.getMatrices().popMatrix();
+                try {
+                    context.getMatrices().translate(-x, -y);
+                    renderImmediate(context, mouseX, mouseY, delta, inSearchMode);
+                } finally {
+                    context.getMatrices().popMatrix();
+                }
                 snapshot.hash = hash;
             } finally {
                 CardSnapshotCache.endCapture();
@@ -234,15 +244,24 @@ public class ModuleComponent extends AbstractComponent {
         outlineColor = MenuStyle.withAlpha(outlineColor, applyGlobalAlpha(0.96F));
         int hoverFillColor = MenuStyle.withAlpha(0xFFFFFFFF, applyGlobalAlpha(hoverProgress * 0.06F));
         rectangle.render(ShapeProperties.create(context.getMatrices(), x, y, width, height)
-                .round(8).softness(1).thickness(3.6F).outlineColor(outlineColor).color(hoverFillColor).build());
+                .round(8).softness(1).thickness(0.0F).outlineColor(0x00000000).color(hoverFillColor).build());
 
-        float iconSize = module.getIconSize();
-        float iconX = x + (width - iconSize) / 2.0F;
-        float iconY = y + 12.0F + module.getIconOffsetY();
-        String iconTexture = module.getIcon() != null ? "phaze:textures/modules/" + module.getIcon() : "textures/modules/" + module.getCategory().getIdentifier() + ".png";
-        image.setTexture(iconTexture)
-                .render(ShapeProperties.create(context.getMatrices(), iconX, iconY, iconSize, iconSize)
-                        .color(applyGlobalAlpha(MenuStyle.TEXT_PRIMARY)).build());
+        float iconCenterX = x + width / 2.0F;
+        float iconCenterY = y + ICON_CENTER_Y;
+        String icon = module.getIcon();
+        if (iconTexture == null || !Objects.equals(icon, iconSource)) {
+            iconSource = icon;
+            iconTexture = icon != null ? "phaze:textures/modules/" + icon : "phaze:textures/modules/hand.png";
+            iconId = Identifier.of(iconTexture);
+            iconQuadHeight = cardIconQuadHeight(iconId);
+        }
+        int iconColor = applyGlobalAlpha(MenuStyle.TEXT_PRIMARY);
+        if (!UiMsdfIconAtlas.renderIconInkScaled(context, iconId, iconCenterX, iconCenterY, iconQuadHeight, iconColor)) {
+            image.setTexture(iconTexture)
+                    .render(ShapeProperties.create(context.getMatrices(), iconCenterX - ICON_FALLBACK_SIZE / 2.0F,
+                                    iconCenterY - ICON_FALLBACK_SIZE / 2.0F, ICON_FALLBACK_SIZE, ICON_FALLBACK_SIZE)
+                            .color(iconColor).build());
+        }
 
         String moduleName = module.getLocalizedName();
         float titleAreaY = y + 31.0F;
@@ -265,7 +284,7 @@ public class ModuleComponent extends AbstractComponent {
 
         if (showStateRow) {
             float enabledY = optionsY + OPTIONS_ROW_HEIGHT;
-            boolean stateRowHovered = MathUtil.isHovered(mouseX, mouseY, x, enabledY, width, ENABLED_ROW_HEIGHT);
+            boolean stateRowHovered = isStateRowHovered(mouseX, mouseY);
             stateRowHoverAnimation.setDirection(stateRowHovered ? Direction.FORWARDS : Direction.BACKWARDS);
             renderStateRow(context, enabledY, stateRowHoverAnimation.getOutputFloat());
         }
@@ -273,6 +292,9 @@ public class ModuleComponent extends AbstractComponent {
         if (showStateRow && module.isCanBind()) {
             drawBind(context, x, y);
         }
+
+        rectangle.render(ShapeProperties.create(context.getMatrices(), x, y, width, height)
+                .round(8).softness(1).thickness(3.6F).outlineColor(outlineColor).color(0x00000000).build());
 
         context.getMatrices().popMatrix();
     }
@@ -283,10 +305,10 @@ public class ModuleComponent extends AbstractComponent {
                 ? MenuStyle.CARD_OPTIONS
                 : MenuStyle.mix(MenuStyle.CARD_OPTIONS, MenuStyle.PANEL_CHIP, 0.45F);
         float iconSectionWidth = 26.0F;
-        float rowX = standaloneRow ? x : x + CARD_INSET;
-        float rowWidth = standaloneRow ? width : width - CARD_INSET * 2.0F;
+        float rowX = getRowX(standaloneRow);
+        float rowWidth = getRowWidth(standaloneRow);
         float dividerX = rowX + rowWidth - iconSectionWidth;
-        boolean rowHovered = MathUtil.isHovered(mouseX, mouseY, rowX, optionsY, rowWidth, OPTIONS_ROW_HEIGHT);
+        boolean rowHovered = isOptionsRowHovered(mouseX, mouseY);
         optionsHoverAnimation.setDirection(rowHovered ? Direction.FORWARDS : Direction.BACKWARDS);
         float rowHoverProgress = optionsHoverAnimation.getOutputFloat();
         int rowColor = MenuStyle.mix(baseRowColor, MenuStyle.TEXT_PRIMARY, rowHoverProgress * 0.055F);
@@ -314,13 +336,14 @@ public class ModuleComponent extends AbstractComponent {
         );
 
         if (hasSettings) {
-            float iconX = dividerX + (iconSectionWidth - 9.0F) / 2.0F;
-            float iconY = optionsY + (OPTIONS_ROW_HEIGHT - 9.0F) / 2.0F;
+            float iconCenterX = dividerX + iconSectionWidth / 2.0F;
+            float iconCenterY = optionsY + OPTIONS_ROW_HEIGHT / 2.0F;
             int iconColor = applyGlobalAlpha(MenuStyle.mix(MenuStyle.TEXT_PRIMARY, 0xFFFFFFFF, rowHoverProgress * 0.10F));
-            Identifier settingsIcon = Identifier.of("phaze", "textures/menu/options_settings.png");
-            if (!UiMsdfIconAtlas.renderIcon(context, settingsIcon, iconX, iconY, 9.0F, 9.0F, iconColor, true)) {
+            if (!UiMsdfIconAtlas.renderIconInkFitted(context, OPTIONS_ICON, iconCenterX, iconCenterY,
+                    OPTIONS_ICON_INK_SIZE, OPTIONS_ICON_INK_SIZE, iconColor)) {
                 image.setTexture("textures/settings.png")
-                        .render(ShapeProperties.create(context.getMatrices(), iconX, iconY, 9.0F, 9.0F)
+                        .render(ShapeProperties.create(context.getMatrices(), iconCenterX - OPTIONS_ICON_INK_SIZE / 2.0F,
+                                        iconCenterY - OPTIONS_ICON_INK_SIZE / 2.0F, OPTIONS_ICON_INK_SIZE, OPTIONS_ICON_INK_SIZE)
                                 .color(iconColor)
                                 .build());
             }
@@ -342,8 +365,8 @@ public class ModuleComponent extends AbstractComponent {
             stateText = module.isState() ? "ENABLED" : "DISABLED";
         }
 
-        rectangle.render(ShapeProperties.create(context.getMatrices(), x + CARD_INSET, enabledY, width - CARD_INSET * 2.0F, ENABLED_ROW_HEIGHT - 1)
-                .round(0, 7, 0, 7).color(stateColor).build());
+        rectangle.render(ShapeProperties.create(context.getMatrices(), getRowX(false), enabledY, getRowWidth(false), ENABLED_ROW_HEIGHT)
+                .round(0, STATE_ROW_RADIUS, 0, STATE_ROW_RADIUS).color(stateColor).build());
 
         MsdfRenderer.renderText(
                 MsdfFonts.bold(),
@@ -352,7 +375,7 @@ public class ModuleComponent extends AbstractComponent {
                 applyGlobalAlpha(MenuStyle.TEXT_PRIMARY),
                 GuiMatrix.mat4(context.getMatrices()),
                 MenuStyle.centerMsdfTextX(MsdfFonts.bold(), stateText, ROW_TEXT_SIZE, x, width),
-                MenuStyle.centerMsdfTextY(ROW_TEXT_SIZE, enabledY, ENABLED_ROW_HEIGHT - 1),
+                MenuStyle.centerMsdfTextY(ROW_TEXT_SIZE, enabledY, ENABLED_ROW_HEIGHT),
                 0.0F
         );
     }
@@ -364,7 +387,7 @@ public class ModuleComponent extends AbstractComponent {
         boolean showStateRow = module.isShowEnable();
         float optionsY = y + baseHeight - (showStateRow ? (OPTIONS_ROW_HEIGHT + ENABLED_ROW_HEIGHT) : OPTIONS_ROW_HEIGHT);
         float enabledY = optionsY + OPTIONS_ROW_HEIGHT;
-        boolean optionsHovered = MathUtil.isHovered(mouseX, mouseY, x, optionsY, width, OPTIONS_ROW_HEIGHT);
+        boolean optionsHovered = isOptionsRowHovered(mouseX, mouseY);
         boolean settingsClick = button == 0 || button == 1;
 
         if (showOptionsRow && settingsClick && optionsHovered) {
@@ -376,7 +399,7 @@ public class ModuleComponent extends AbstractComponent {
             return true;
         }
 
-        if (showStateRow && button == 0 && MathUtil.isHovered(mouseX, mouseY, x, enabledY, width, ENABLED_ROW_HEIGHT)) {
+        if (showStateRow && button == 0 && isStateRowHovered(mouseX, mouseY)) {
             if (module.isServerLocked()) {
                 return true;
             }
@@ -428,6 +451,51 @@ public class ModuleComponent extends AbstractComponent {
         return !components.isEmpty();
     }
 
+    private static float cardIconQuadHeight(Identifier icon) {
+        UiMsdfIconAtlas.IconInk ink = UiMsdfIconAtlas.ink(icon);
+        float inkWidth = Math.max(0.0001F, UiMsdfIconAtlas.resolveAspectRatio(icon) * ink.width());
+        float inkHeight = Math.max(0.0001F, ink.height());
+        float byArea = ICON_INK_SIZE / (float) Math.sqrt(inkWidth * inkHeight);
+        return Math.min(byArea, ICON_INK_MAX / Math.max(inkWidth, inkHeight));
+    }
+
+    private float getRowX(boolean standalone) { return x + (standalone ? 0.0F : ROW_INSET); }
+    private float getRowWidth(boolean standalone) { return width - (standalone ? 0.0F : ROW_INSET * 2.0F); }
+
+    private float getOptionsRowY() {
+        return y + getOptionsRowOffsetY();
+    }
+
+    private float getOptionsRowOffsetY() {
+        return getBaseHeightFloat() - OPTIONS_ROW_HEIGHT
+                - (module.isShowEnable() ? ENABLED_ROW_HEIGHT : 0.0F);
+    }
+
+    private float getStateRowY() {
+        return getOptionsRowY() + OPTIONS_ROW_HEIGHT;
+    }
+
+    private boolean isOptionsRowHovered(double mouseX, double mouseY) {
+        boolean standalone = !module.isShowEnable();
+        return hasSettings() && isRowHovered(mouseX, mouseY, standalone, getOptionsRowY(), OPTIONS_ROW_HEIGHT,
+                standalone ? STANDALONE_OPTIONS_RADIUS : 0.0F);
+    }
+
+    private boolean isStateRowHovered(double mouseX, double mouseY) {
+        return module.isShowEnable() && isRowHovered(mouseX, mouseY, false, getStateRowY(), ENABLED_ROW_HEIGHT, STATE_ROW_RADIUS);
+    }
+
+    private boolean isRowHovered(double mouseX, double mouseY, boolean standalone, float rowY, float rowHeight, float radius) {
+        float rowX = getRowX(standalone), rowWidth = getRowWidth(standalone), bottom = rowY + rowHeight;
+        if (!MathUtil.isHovered(mouseX, mouseY, rowX, rowY, rowWidth, rowHeight) || mouseY >= bottom) return false;
+        if (radius > 0.0F && mouseY > bottom - radius) {
+            double dx = mouseX - Math.max(rowX + radius, Math.min(mouseX, rowX + rowWidth - radius));
+            double dy = mouseY - (bottom - radius);
+            return dx * dx + dy * dy <= radius * radius;
+        }
+        return true;
+    }
+
     private float getBaseHeightFloat() {
         if (module.isShowEnable()) {
             return BASE_HEIGHT_ENABLED;
@@ -436,7 +504,11 @@ public class ModuleComponent extends AbstractComponent {
     }
 
     public int getComponentHeight() {
-        return Math.round(getBaseHeightFloat());
+        float bottom = getBaseHeightFloat();
+        if (module.isShowEnable()) {
+            bottom = Math.max(bottom, getOptionsRowOffsetY() + OPTIONS_ROW_HEIGHT + ENABLED_ROW_HEIGHT);
+        }
+        return (int) Math.ceil(bottom);
     }
 
     private boolean isInSearchMode() {
@@ -737,6 +809,6 @@ public class ModuleComponent extends AbstractComponent {
 
     @Override
     public int hashCode() {
-        return Objects.hash(module);
+        return module.hashCode();
     }
 }

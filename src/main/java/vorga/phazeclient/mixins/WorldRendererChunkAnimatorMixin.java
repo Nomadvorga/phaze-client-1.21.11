@@ -16,6 +16,8 @@ import vorga.phazeclient.implement.features.modules.other.ChunkAnimator;
 public abstract class WorldRendererChunkAnimatorMixin {
 
     private static final float[] PHAZE$DIR = new float[3];
+    private static final int[] PHAZE$SINGLE_SLOT = { 0 };
+    private static final float[] PHAZE$SECTION_SCALE = new float[256];
 
     @ModifyArg(
             method = "renderBlockLayers",
@@ -34,7 +36,10 @@ public abstract class WorldRendererChunkAnimatorMixin {
         }
 
         if (animator.isScaleMode()) {
-            float scale = animator.getScale(builtChunk.getOrigin());
+            var origin = builtChunk.getOrigin();
+            animator.writeRegionSectionScaleValues(origin.getX(), origin.getY(), origin.getZ(),
+                    PHAZE$SINGLE_SLOT, 1, PHAZE$SECTION_SCALE);
+            float scale = PHAZE$SECTION_SCALE[0];
             if (scale >= 1.0F) {
                 return modelView;
             }

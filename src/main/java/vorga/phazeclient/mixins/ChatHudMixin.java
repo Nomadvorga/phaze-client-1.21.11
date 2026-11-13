@@ -279,6 +279,11 @@ public abstract class ChatHudMixin implements ChatAnimationFrameAccess {
     }
 
     @Override
+    public boolean phaze$isLatestChatLine(ChatHudLine.Visible line) {
+        return line != null && line.addedTime() == phaze$latestAddedTick;
+    }
+
+    @Override
     public float phaze$getChatFrameDx() {
         return phaze$frameDx;
     }
@@ -288,95 +293,32 @@ public abstract class ChatHudMixin implements ChatAnimationFrameAccess {
         return phaze$frameDy;
     }
 
-    @ModifyArgs(
+    @WrapOperation(
             method = "method_75802",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/hud/ChatHud$Backend;fill(IIIII)V")
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/hud/ChatHud$Backend;fill(IIIII)V"),
+            require = 1
     )
-    private static void phaze$shiftBackendFill(Args args, @Local(argsOnly = true) ChatHudLine.Visible visible) {
+    private static void phaze$shiftBackendFill(@org.spongepowered.asm.mixin.injection.Coerce Object backend,
+                                               int x1, int y1, int x2, int y2, int color,
+                                               Operation<Void> original,
+                                               @Local(argsOnly = true) ChatHudLine.Visible visible) {
+        if (ExordiumAnimationBridge.isCapturingChat()) {
+            if (backend instanceof vorga.phazeclient.api.system.hud.ChatHudBadgeRenderAccess capture) {
+                capture.phaze$recordElement(x1, y1, x2, y2, visible);
+            }
+            original.call(backend, x1, y1, x2, y2, color);
+            return;
+        }
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || client.inGameHud == null
                 || !(client.inGameHud.getChatHud() instanceof ChatAnimationFrameAccess access)
                 || !access.phaze$shouldShiftChatLine(visible)) {
+            original.call(backend, x1, y1, x2, y2, color);
             return;
         }
         int dx = Math.round(access.phaze$getChatFrameDx());
         int dy = Math.round(access.phaze$getChatFrameDy());
-        args.set(0, (Integer) args.get(0) + dx);
-        args.set(1, (Integer) args.get(1) + dy);
-        args.set(2, (Integer) args.get(2) + dx);
-        args.set(3, (Integer) args.get(3) + dy);
-    }
-
-    @WrapOperation(
-            method = "render(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/client/font/TextRenderer;IIIZZ)V",
-            at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/client/gui/DrawContext;fill(IIIII)V"),
-            require = 0
-    )
-    private void phaze$shiftFill(DrawContext ctx, int x1, int y1, int x2, int y2, int color,
-                                 Operation<Void> op,
-                                 @Local ChatHudLine.Visible visible) {
-        if (ExordiumAnimationBridge.isCapturingChat()) {
-            ExordiumAnimationBridge.recordChatElement(
-                    ctx, x1, y1, x2, y2,
-                    visible != null && visible.addedTime() == phaze$latestAddedTick
-            );
-            op.call(ctx, x1, y1, x2, y2, color);
-            return;
-        }
-        if (phaze$shouldShift(visible)) {
-            int dx = Math.round(phaze$frameDx);
-            int dy = Math.round(phaze$frameDy);
-            op.call(ctx, x1 + dx, y1 + dy, x2 + dx, y2 + dy, color);
-        } else {
-            op.call(ctx, x1, y1, x2, y2, color);
-        }
-    }
-
-    @WrapOperation(
-            method = "render(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/client/font/TextRenderer;IIIZZ)V",
-            at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/client/gui/DrawContext;drawTextWithShadow(Lnet/minecraft/client/font/TextRenderer;Lnet/minecraft/text/OrderedText;III)V"),
-            require = 0
-    )
-    private void phaze$shiftText(DrawContext ctx, TextRenderer renderer, OrderedText text,
-                                 int x, int y, int color,
-                                 Operation<Void> op,
-                                 @Local ChatHudLine.Visible visible) {
-        if (ExordiumAnimationBridge.isCapturingChat()) {
-            ExordiumAnimationBridge.recordChatElement(
-                    ctx,
-                    x - 1.0F,
-                    y - 1.0F,
-                    x + renderer.getWidth(text) + 2.0F,
-                    y + 10.0F,
-                    visible != null && visible.addedTime() == phaze$latestAddedTick
-            );
-            if (phaze$shouldDrawChatBadge(visible)) {
-                PhazeBadgeUtil.drawChatBadgeAsText(
-                        ctx, renderer, x - 1.0F, y - 1.0F, PhazeBadgeUtil.alphaWhite(color),
-                        phaze$isCodeBadge(visible)
-                );
-            }
-            op.call(ctx, renderer, text, x, y, color);
-            return;
-        }
-
-        int drawX = x;
-        int drawY = y;
-        if (phaze$shouldShift(visible)) {
-            drawX += Math.round(phaze$frameDx);
-            drawY += Math.round(phaze$frameDy);
-        }
-
-        if (phaze$shouldDrawChatBadge(visible)) {
-            PhazeBadgeUtil.drawChatBadgeAsText(
-                    ctx, renderer, drawX - 1.0F, drawY - 1.0F,
-                    PhazeBadgeUtil.alphaWhite(color), phaze$isCodeBadge(visible)
-            );
-        }
-
-        op.call(ctx, renderer, text, drawX, drawY, color);
+        original.call(backend, x1 + dx, y1 + dy, x2 + dx, y2 + dy, color);
     }
 
     @Unique

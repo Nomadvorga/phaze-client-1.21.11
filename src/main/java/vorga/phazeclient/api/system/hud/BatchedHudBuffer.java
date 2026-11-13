@@ -22,12 +22,16 @@ public final class BatchedHudBuffer {
     private int targetFps = 30;
 
     private Framebuffer realMainFramebuffer;
+    private HudCapture capture;
+    private final HudAnimationRefreshClock refreshClock = new HudAnimationRefreshClock(30);
+    private long captureStartedNanos;
 
     private BatchedHudBuffer() {
     }
 
     public void setTargetFps(int fps) {
         this.targetFps = Math.max(1, Math.min(360, fps));
+        refreshClock.setFps(this.targetFps);
     }
 
     public int getTargetFps() {
@@ -43,7 +47,7 @@ public final class BatchedHudBuffer {
     }
 
     public SimpleFramebuffer getActiveCaptureFramebuffer() {
-        return (HudBuffer.activeCaptureTarget >= 0) ? fbo : null;
+        return HudBuffer.activeCaptureFramebuffer == fbo ? fbo : null;
     }
 
     public Framebuffer getRealMainFramebuffer() {
@@ -51,14 +55,24 @@ public final class BatchedHudBuffer {
     }
 
     public boolean shouldRefresh(boolean force) {
-        if (force || dirty || !hasContent) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        boolean resized = client != null && client.getWindow() != null
+                && (lastWidth != client.getWindow().getFramebufferWidth()
+                || lastHeight != client.getWindow().getFramebufferHeight());
+        if (force || dirty || !hasContent || resized) {
             return true;
         }
-        long elapsed = System.currentTimeMillis() - lastRefreshMs;
-        return elapsed >= (1000L / targetFps);
+        return refreshClock.due(System.nanoTime());
     }
 
     public boolean ensureFramebuffer() {
+        try (Render2DState state = Render2DState.capture()) {
+            return ensureFramebufferInternal();
+        }
+    }
+
+    private boolean ensureFramebufferInternal() {
+        RenderSystem.assertOnRenderThread();
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc == null || mc.getWindow() == null) {
             return false;
@@ -70,11 +84,12 @@ public final class BatchedHudBuffer {
         }
 
         if (fbo == null || w != lastWidth || h != lastHeight) {
+            if (capture != null && !capture.isClosed())
+                throw new IllegalStateException("Cannot resize a capturing HUD framebuffer");
             if (fbo != null) {
 
                 if (HudBuffer.activeCaptureFramebuffer == fbo) {
-                    HudBuffer.activeCaptureFramebuffer = null;
-                    HudBuffer.activeCaptureTarget = -1;
+                    HudBuffer.restoreCaptureTarget(-1, null);
                 }
                 fbo.delete();
                 fbo = null;
@@ -92,22 +107,54 @@ public final class BatchedHudBuffer {
     private boolean capturing;
 
     public boolean isCaptureActive() {
-        return capturing;
+        return capturing && capture != null && !capture.isClosed();
     }
 
     public void beginCapture() {
-        if (!ensureFramebuffer()) {
-            return;
+        openCapture();
+    }
+
+    public HudCapture openCapture() {
+        if (capture != null && capture.isClosed()) {
+            capture = null;
+            capturing = false;
+            hasContent = false;
+            dirty = true;
         }
+        if (capturing) throw new IllegalStateException("Batched HUD is already capturing");
+        HudPassState state = HudPassState.capture();
+        try {
+            if (!ensureFramebufferInternal()) {
+                state.close();
+                return null;
+            }
+            MinecraftClient mc = MinecraftClient.getInstance();
+            if (HudBuffer.activeCaptureTarget < 0) realMainFramebuffer = mc != null ? mc.getFramebuffer() : null;
+            clear();
+            long started = System.nanoTime();
+            captureStartedNanos = started;
+            capture = HudCapture.attach(state, fbo, successful -> {
+                capture = null;
+                capturing = false;
+                hasContent = successful && fbo != null;
+                dirty = !hasContent;
+                if (hasContent) {
+                    lastRefreshMs = System.currentTimeMillis();
+                    refreshClock.captured(started);
+                }
+            });
+            capturing = true;
+            return capture;
+        } catch (RuntimeException | Error failure) {
+            if (capture == null || capture.isClosed()) {
+                try { state.close(); } catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            }
+            throw failure;
+        }
+    }
 
-        MinecraftClient mc = MinecraftClient.getInstance();
-        realMainFramebuffer = mc != null ? mc.getFramebuffer() : null;
-
+    private void clear() {
         clearFbo();
-
-        HudBuffer.activeCaptureFramebuffer = fbo;
-        HudBuffer.activeCaptureTarget = CAPTURE_ACTIVE;
-        capturing = true;
     }
 
     private void clearFbo() {
@@ -122,16 +169,27 @@ public final class BatchedHudBuffer {
     }
 
     public void endCapture() {
-        capturing = false;
-        HudBuffer.activeCaptureTarget = -1;
-        HudBuffer.activeCaptureFramebuffer = null;
-        if (fbo == null) {
-            return;
-        }
+        if (capture == null) return;
+        capture.commit();
+        endCapture(true);
+    }
 
-        hasContent = true;
-        dirty = false;
-        lastRefreshMs = System.currentTimeMillis();
+    public void endCapture(boolean successful) {
+        if (!capturing) return;
+        capture.checkCanClose();
+        capturing = false;
+        HudCapture started = capture;
+        capture = null;
+        hasContent = false;
+        dirty = true;
+        started.close(successful);
+        successful &= started.wasSuccessful();
+        if (successful && fbo != null) {
+            hasContent = true;
+            dirty = false;
+            lastRefreshMs = System.currentTimeMillis();
+            refreshClock.captured(captureStartedNanos);
+        }
     }
 
     public void blit() {
@@ -144,10 +202,15 @@ public final class BatchedHudBuffer {
             return;
         }
 
-        vorga.phazeclient.api.system.draw.ScreenBlit.blitOverMain(fbo);
+        HudBlit.draw(fbo, com.mojang.blaze3d.textures.FilterMode.NEAREST);
     }
 
     public void cleanup() {
+        RenderSystem.assertOnRenderThread();
+        if (capturing) {
+            HudCapture.abortThrough(capture);
+            endCapture(false);
+        }
 
         if (HudBuffer.activeCaptureFramebuffer == fbo) {
             HudBuffer.activeCaptureFramebuffer = null;
@@ -161,5 +224,7 @@ public final class BatchedHudBuffer {
         dirty = true;
         lastWidth = -1;
         lastHeight = -1;
+        realMainFramebuffer = null;
+        refreshClock.reset();
     }
 }

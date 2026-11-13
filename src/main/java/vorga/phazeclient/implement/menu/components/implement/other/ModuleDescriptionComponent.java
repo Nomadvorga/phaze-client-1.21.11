@@ -6,7 +6,7 @@ import lombok.Getter;
 import lombok.Setter;
 import vorga.phazeclient.api.feature.module.Module;
 import vorga.phazeclient.api.feature.module.setting.Setting;
-import vorga.phazeclient.api.system.font.Fonts;
+import vorga.phazeclient.implement.menu.font.GuiFonts;
 import vorga.phazeclient.api.system.shape.ShapeProperties;
 import vorga.phazeclient.base.util.render.GuiMatrix;
 import vorga.phazeclient.implement.menu.MenuStyle;
@@ -41,7 +41,7 @@ public class ModuleDescriptionComponent extends AbstractComponent {
         String[] lines = wrapText(description, maxWidth);
         float textWidth = 0f;
         for (String line : lines) {
-            float lineWidth = Fonts.getSize(fontSize).getStringWidth(line);
+            float lineWidth = GuiFonts.getSize(fontSize).getStringWidth(line);
             textWidth = Math.max(textWidth, lineWidth);
         }
 
@@ -82,7 +82,7 @@ public class ModuleDescriptionComponent extends AbstractComponent {
         float textX = boxX + padding;
         float textY = boxY + padding;
         for (String line : lines) {
-            Fonts.getSize(fontSize).drawString(textPose, line, textX, textY - 0.5f, textColor);
+            GuiFonts.getSize(fontSize).drawString(context.getMatrices(), line, textX, textY - 0.5f, textColor);
             textY += lineHeight;
         }
     }
@@ -95,7 +95,7 @@ public class ModuleDescriptionComponent extends AbstractComponent {
 
     public void setHoveredModule(Module module) {
         if (module != null) {
-            String moduleDescription = module.getDescription();
+            String moduleDescription = module.getDisplayDescription();
             if (!moduleDescription.isEmpty()) {
                 this.hoveredModule = module;
                 this.hoveredSetting = null;
@@ -177,7 +177,7 @@ public class ModuleDescriptionComponent extends AbstractComponent {
 
         for (String word : words) {
             String testLine = !currentLine.isEmpty() ? currentLine + " " + word : word;
-            float lineWidth = Fonts.getSize(16).getStringWidth(testLine);
+            float lineWidth = GuiFonts.getSize(16).getStringWidth(testLine);
 
             if (lineWidth <= maxWidth) {
                 currentLine = new StringBuilder(testLine);

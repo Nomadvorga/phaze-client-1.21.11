@@ -1,5 +1,4 @@
 package vorga.phazeclient.implement.features.modules.other;
-
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -11,9 +10,7 @@ import vorga.phazeclient.api.feature.module.ModuleCategory;
 import vorga.phazeclient.api.feature.module.setting.implement.*;
 import vorga.phazeclient.base.util.ServerUtil;
 import vorga.phazeclient.base.util.PhazeAnnouncements;
-
 import java.util.concurrent.CountDownLatch;
-
 public final class AutoSwap extends Module {
     private static final AutoSwap INSTANCE = new AutoSwap();
     private static final int FIXED_SLOT_COUNT = 3;
@@ -21,55 +18,43 @@ public final class AutoSwap extends Module {
     private static final String TALISMAN_KEY = "талисман";
     private static final String TOTEM_KEY = "тотем";
     private static final int SWAP_DELAY_MS = 50;
-
     public final SectionSetting generalSection = new SectionSetting("General");
     public final BindSetting keybind = new BindSetting("Keybind", "Key to activate swap");
     public final SelectSetting swapType = new SelectSetting("Swap Type", "Automatic swap type")
             .value("Sphere -> Totem", "Sphere -> Talisman", "Talisman -> Totem", "Talisman -> Talisman", "Sphere -> Sphere")
             .selected("Sphere -> Totem")
             .onChange(this::onSwapTypeChanged);
-
     private boolean isSwapping = false;
     private int currentSlotIndex = 0;
-
     private AutoSwap() {
         super("autoswap", "Auto Swap", ModuleCategory.UTILITIES);
-
         keybind.setFullWidth(true);
         swapType.setFullWidth(true);
-
         setup(generalSection, keybind, swapType);
     }
-
     public static AutoSwap getInstance() {
         return INSTANCE;
     }
-
     @Override
     public String getDescription() {
         return "Swaps items on button press";
     }
-
     @Override
     public String getIcon() {
         return "autoswap.png";
     }
-
     @Override
     public float getIconSize() {
         return 21.0F;
     }
-
     @Override
     public boolean isCanBind() {
         return false;
     }
-
     @Override
     public boolean isServerAllowed() {
         return ServerUtil.isAutoSwapSupported();
     }
-
     public void activateDirectSwap() {
         if (!canActivateInGame()) {
             return;
@@ -83,30 +68,24 @@ public final class AutoSwap extends Module {
             }
             return;
         }
-
         SwapTarget target = findNextAvailableTargetWithRules();
         if (target != null) {
             startSwapSequence(target);
         }
     }
-
     public boolean canActivateInGame() {
         MinecraftClient client = MinecraftClient.getInstance();
         return client.player != null && client.world != null && client.currentScreen == null;
     }
-
     private void startSwapSequence(SwapTarget target) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null || client.interactionManager == null || isSwapping) {
             return;
         }
-
         if (target.slotId < 0 || target.slotId >= client.player.playerScreenHandler.slots.size()) {
             return;
         }
-
         isSwapping = true;
-
         Thread worker = new Thread(() -> {
             sleepSwapDelay();
             client.execute(() -> performSwap(target.slotId, target.itemName));
@@ -114,29 +93,23 @@ public final class AutoSwap extends Module {
         worker.setDaemon(true);
         worker.start();
     }
-
     private void performSwap(int targetSlot, String itemName) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null || client.interactionManager == null) {
             finishSwap();
             return;
         }
-
         int syncId = client.player.playerScreenHandler.syncId;
         int offhandSlot = 45;
-
         boolean hasOffhandItem = !client.player.getOffHandStack().isEmpty();
-
         Thread worker = new Thread(() -> {
             runSwapClick(client, syncId, targetSlot);
             sleepSwapDelay();
             runSwapClick(client, syncId, offhandSlot);
-
             if (hasOffhandItem) {
                 sleepSwapDelay();
                 runSwapClick(client, syncId, targetSlot);
             }
-
             sleepSwapDelay();
             client.execute(() -> {
                 showSwapMessage(itemName);
@@ -146,32 +119,25 @@ public final class AutoSwap extends Module {
         worker.setDaemon(true);
         worker.start();
     }
-
     private void finishSwap() {
         isSwapping = false;
     }
-
     private void showSwapMessage(String itemName) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null || itemName == null || itemName.isEmpty()) {
             return;
         }
-
         ItemStack foundStack = findItemStackByName(itemName);
         if (foundStack != null && !foundStack.isEmpty()) {
-
             Text swapMessage = Text.literal("Swap to ").append(foundStack.getName());
             client.player.sendMessage(swapMessage, true);
         } else {
-
             client.player.sendMessage(Text.literal("Swap to " + itemName), true);
         }
     }
-
     private ItemStack findItemStackByName(String itemName) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null) return null;
-
         var mainStacks = client.player.getInventory().getMainStacks();
         for (int i = 0; i < mainStacks.size(); i++) {
             ItemStack stack = mainStacks.get(i);
@@ -179,107 +145,84 @@ public final class AutoSwap extends Module {
                 return stack;
             }
         }
-
         ItemStack offhand = client.player.getOffHandStack();
         if (!offhand.isEmpty() && offhand.getName().getString().equals(itemName)) {
             return offhand;
         }
-
         return null;
     }
-
     private SwapTarget findNextAvailableTargetWithRules() {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null) return null;
-
         ItemStack offhandStack = client.player.getOffHandStack();
         String currentOffhandItem = offhandStack.isEmpty() ? null : offhandStack.getName().getString();
-
         return applySwapRules(currentOffhandItem);
     }
-
     private SwapTarget applySwapRules(String currentItem) {
         String rule = swapType.getSelected();
         String lowerItem = currentItem == null ? "" : currentItem.toLowerCase();
-
         if (currentItem == null || currentItem.isEmpty()) {
             if ("Talisman -> Talisman".equals(rule)) {
                 SwapTarget talisman = findItemContaining(TALISMAN_KEY);
                 if (talisman != null) return talisman;
             }
-
             SwapTarget totem = findTotemTarget();
             if (totem != null) return totem;
-
             SwapTarget talisman = findItemContaining(TALISMAN_KEY);
             if (talisman != null) return talisman;
-
             return findItemContaining(SPHERE_KEY);
         }
-
         if (isTotemName(currentItem)) {
             if ("Sphere -> Totem".equals(rule) || "Sphere -> Talisman".equals(rule)) {
                 SwapTarget sphere = findItemContaining(SPHERE_KEY);
                 if (sphere != null) return sphere;
             }
-
             if ("Talisman -> Totem".equals(rule)) {
                 SwapTarget talisman = findItemContaining(TALISMAN_KEY);
                 if (talisman != null) return talisman;
             }
             return null;
         }
-
         if (lowerItem.contains(TALISMAN_KEY)) {
             if ("Talisman -> Talisman".equals(rule)) {
                 SwapTarget talisman = findItemContaining(TALISMAN_KEY);
                 if (talisman != null) return talisman;
             }
-
             if ("Talisman -> Totem".equals(rule)) {
                 SwapTarget totem = findTotemTarget();
                 if (totem != null) return totem;
-
                 if ("Sphere -> Totem".equals(rule) || "Sphere -> Talisman".equals(rule)) {
                     SwapTarget sphere = findItemContaining(SPHERE_KEY);
                     if (sphere != null) return sphere;
                 }
             }
-
             if ("Sphere -> Talisman".equals(rule)) {
                 return findItemContaining(SPHERE_KEY);
             }
             return null;
         }
-
         if (lowerItem.contains(SPHERE_KEY)) {
             if ("Sphere -> Sphere".equals(rule)) {
                 SwapTarget sphere = findItemContaining(SPHERE_KEY);
                 if (sphere != null) return sphere;
             }
-
             if ("Sphere -> Totem".equals(rule)) {
                 SwapTarget totem = findTotemTarget();
                 if (totem != null) return totem;
-
                 SwapTarget talisman = findItemContaining(TALISMAN_KEY);
                 if (talisman != null) return talisman;
             } else if ("Sphere -> Talisman".equals(rule)) {
                 SwapTarget talisman = findItemContaining(TALISMAN_KEY);
                 if (talisman != null) return talisman;
-
                 SwapTarget totem = findTotemTarget();
                 if (totem != null) return totem;
             }
         }
-
         return null;
     }
-
     private SwapTarget findTotemTarget() {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null) return null;
-
         var mainStacks = client.player.getInventory().getMainStacks();
         for (int i = 0; i < mainStacks.size(); i++) {
             ItemStack stack = mainStacks.get(i);
@@ -289,11 +232,9 @@ public final class AutoSwap extends Module {
         }
         return null;
     }
-
     private SwapTarget findItemContaining(String searchText) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null) return null;
-
         var mainStacks = client.player.getInventory().getMainStacks();
         for (int i = 0; i < mainStacks.size(); i++) {
             ItemStack stack = mainStacks.get(i);
@@ -306,17 +247,14 @@ public final class AutoSwap extends Module {
         }
         return null;
     }
-
     private boolean isTotemName(String itemName) {
         return itemName != null
                 && (itemName.equalsIgnoreCase("Totem of Undying")
                 || itemName.toLowerCase().contains(TOTEM_KEY));
     }
-
     private int findItemSlotByName(String itemName) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null) return -1;
-
         var mainStacks = client.player.getInventory().getMainStacks();
         for (int i = 0; i < mainStacks.size(); i++) {
             ItemStack stack = mainStacks.get(i);
@@ -326,7 +264,6 @@ public final class AutoSwap extends Module {
         }
         return -1;
     }
-
     private void runSwapClick(MinecraftClient client, int syncId, int slotId) {
         CountDownLatch latch = new CountDownLatch(1);
         client.execute(() -> {
@@ -339,14 +276,12 @@ public final class AutoSwap extends Module {
                 latch.countDown();
             }
         });
-
         try {
             latch.await();
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
         }
     }
-
     private void sleepSwapDelay() {
         try {
             Thread.sleep(SWAP_DELAY_MS);
@@ -354,20 +289,15 @@ public final class AutoSwap extends Module {
             Thread.currentThread().interrupt();
         }
     }
-
     public boolean isSwapping() {
         return isSwapping;
     }
-
     private void onSwapTypeChanged(String newType) {
-
     }
 }
-
 class SwapTarget {
     final String itemName;
     final int slotId;
-
     SwapTarget(String itemName, int slotId) {
         this.itemName = itemName;
         this.slotId = slotId;

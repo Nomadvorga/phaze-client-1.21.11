@@ -193,4 +193,8 @@ public final class MenuStyle {
     public static float centerMsdfTextY(float size, float boxY, float boxHeight) {
         return boxY + (boxHeight - size) / 2.0F + MSDF_CENTER_Y_OFFSET;
     }
+
+    public static float centerMsdfTextY(float size, float boxY, float boxHeight, float opticalOffset) {
+        return centerMsdfTextY(size, boxY, boxHeight) + opticalOffset;
+    }
 }

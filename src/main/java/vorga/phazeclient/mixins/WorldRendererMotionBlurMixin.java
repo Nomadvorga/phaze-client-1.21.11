@@ -29,6 +29,7 @@ public abstract class WorldRendererMotionBlurMixin {
     @Unique private final Vector3f phaze$previousCameraPosition = new Vector3f();
     @Unique private final Vector3f phaze$currentCameraPosition = new Vector3f();
     @Unique private boolean phaze$motionHistoryValid;
+    @Unique private Object phaze$lastScreen;
 
     @Inject(method = "render", at = @At("HEAD"))
     private void phaze$captureMotionBlurFrame(
@@ -37,6 +38,11 @@ public abstract class WorldRendererMotionBlurMixin {
             Matrix4f projectionMatrix, Matrix4f frustumMatrix,
             GpuBufferSlice fogBuffer, Vector4f fogColor, boolean renderSky,
             CallbackInfo ci) {
+        Object currentScreen = client == null ? null : client.currentScreen;
+        if (currentScreen != phaze$lastScreen) {
+            phaze$lastScreen = currentScreen;
+            phaze$motionHistoryValid = false;
+        }
         MotionBlur module = MotionBlur.getInstance();
         if (module == null || !module.isEnabled() || module.shader == null) {
             phaze$motionHistoryValid = false;

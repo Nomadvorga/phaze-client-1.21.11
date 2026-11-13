@@ -1,0 +1,31 @@
+package vorga.phazeclient.mixins;
+
+import net.minecraft.client.texture.NativeImage;
+import net.minecraft.client.texture.PlayerSkinTextureDownloader;
+import net.minecraft.util.AssetInfo;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import vorga.phazeclient.implement.features.modules.other.ThreeDSkinsVoxelizer;
+
+import java.util.concurrent.CompletableFuture;
+
+@Mixin(PlayerSkinTextureDownloader.class)
+public abstract class PlayerSkinTextureDownloaderMixin {
+
+    @Inject(
+            method = "registerTexture(Lnet/minecraft/util/AssetInfo$TextureAsset;Lnet/minecraft/client/texture/NativeImage;)Ljava/util/concurrent/CompletableFuture;",
+            at = @At("HEAD"),
+            require = 1
+    )
+    private static void phaze$onRegisterSkinTexture(
+            AssetInfo.TextureAsset asset,
+            NativeImage image,
+            CallbackInfoReturnable<CompletableFuture<AssetInfo.TextureAsset>> cir
+    ) {
+        // registerTexture transfers ownership to the texture upload path. Snapshot only
+        // alpha here, while the image is live; geometry is built lazily on the client.
+        ThreeDSkinsVoxelizer.capture(asset.texturePath(), image);
+    }
+}

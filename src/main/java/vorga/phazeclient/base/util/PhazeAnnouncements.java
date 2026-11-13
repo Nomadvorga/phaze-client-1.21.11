@@ -21,15 +21,38 @@ import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.net.URI;
 
+/**
+ * Operator announcements: a short message the server wants in front of
+ * the player now.
+ *
+ * <h3>Two ways in, one effect</h3>
+ * An announcement arrives either pushed down the event stream (for
+ * players already in game) or attached to the periodic rules response
+ * (for anyone who launched after it was created). Both funnel through
+ * {@link #accept}, which keys on the announcement id - so an
+ * announcement that arrives by push and again on the next poll rings
+ * once, prints to chat once, and shows one banner.
+ *
+ * <p>{@link #seenIds} is never cleared. An announcement lives at most
+ * a week and the set costs a few bytes per entry, so bounding it would
+ * risk re-firing an old one for no real saving.
+ */
 public final class PhazeAnnouncements {
 
+    /** How long one banner stays on screen, independent of the announcement's lifetime. */
     private static final long BANNER_MS = 10_000L;
 
+    /**
+     * URLs in the chat line become clickable. Deliberately strict -
+     * only http(s), and stopping at whitespace or trailing
+     * punctuation, so a sentence-ending period does not end up inside
+     * the link.
+     */
     private static final Pattern URL_PATTERN =
             Pattern.compile("https?://[\\w\\-._~:/?#\\[\\]@!$&'()*+,;=%]+[\\w\\-_~/#\\[\\]@$&*+=]");
 
+    /** Emerald gradient endpoints for the chat brand, light to deep. */
     private static final int BRAND_FROM = 0x6EF7A5;
     private static final int BRAND_TO = 0x0FA968;
 
@@ -39,6 +62,14 @@ public final class PhazeAnnouncements {
     private PhazeAnnouncements() {
     }
 
+    /**
+     * Palette the server's colour keys resolve against.
+     *
+     * <p>The server only ever sends a name, never a hex value, so this
+     * map is the complete set of colours an announcement can be - and
+     * the palette can be restyled in a client update without touching
+     * anything already stored.
+     */
     private static int resolveColor(String key) {
         if (key == null) {
             return 0xFFFFFFFF;
@@ -53,27 +84,35 @@ public final class PhazeAnnouncements {
             case "blue" -> 0xFF5B9DFF;
             case "purple" -> 0xFFB57BFF;
             case "pink" -> 0xFFFF7BC2;
-
+            // "white" and anything unrecognised
             default -> 0xFFFFFFFF;
         };
     }
 
+    /** One on-screen announcement with its own deadline. */
     public record Banner(int id, String text, int color, long shownUntilMs) {
         public boolean isExpired(long now) {
             return now >= shownUntilMs;
         }
     }
 
+    /**
+     * Banners that should currently be drawn, newest last. Expired
+     * ones are dropped as a side effect - this is called every frame,
+     * which makes it the natural place to sweep.
+     */
     public static synchronized List<Banner> activeBanners() {
         long now = System.currentTimeMillis();
         banners.removeIf(banner -> banner.isExpired(now));
         return List.copyOf(banners);
     }
 
+    /** Drops one immediately - the operator retracted it. */
     public static synchronized void dismiss(int id) {
         banners.removeIf(banner -> banner.id() == id);
     }
 
+    /** Handles a batch from the rules response. */
     public static void acceptAll(JsonElement element) {
         if (element == null || !element.isJsonArray()) {
             return;
@@ -86,6 +125,11 @@ public final class PhazeAnnouncements {
         }
     }
 
+    /**
+     * Shows one announcement, unless this id has already been shown.
+     * Safe to call from any thread - the effects are hopped onto the
+     * client thread.
+     */
     public static void accept(JsonObject json) {
         if (json == null || !json.has("id")) {
             return;
@@ -102,6 +146,11 @@ public final class PhazeAnnouncements {
             return;
         }
 
+        // Keyed on id AND repeat count. The id alone stops push and
+        // poll from ringing twice for the same announcement; including
+        // the counter is what lets the operator send one again -
+        // without it a repeat would be silently swallowed by everyone
+        // who already saw the original.
         String key = id + ":" + repeatCount;
         synchronized (PhazeAnnouncements.class) {
             if (!seenIds.add(key)) {
@@ -140,6 +189,14 @@ public final class PhazeAnnouncements {
         }
     }
 
+    /**
+     * Maps the server's sound key to a vanilla sound.
+     *
+     * <p>The server sends a key, never a sound id, so this switch is
+     * the whole set of sounds an announcement can ever make. Anything
+     * unrecognised is silent rather than falling back to something -
+     * a surprise noise is worse than none.
+     */
     private static void playSound(MinecraftClient client, String sound) {
         if (sound == null || sound.isBlank() || "none".equals(sound)) {
             return;
@@ -164,6 +221,13 @@ public final class PhazeAnnouncements {
         client.getSoundManager().play(PositionedSoundInstance.ui(event, 1.0F, 1.0F));
     }
 
+    /**
+     * Turns the chat line into text with clickable links.
+     *
+     * <p>Only the URL itself carries the click event and the underline
+     * - making the whole line clickable would mean a stray click on
+     * the message opened a browser.
+     */
     static Text buildChatMessage(String raw) {
         MutableText result = brandPrefix();
         Matcher matcher = URL_PATTERN.matcher(raw);
@@ -177,7 +241,7 @@ public final class PhazeAnnouncements {
             result.append(Text.literal(url).setStyle(Style.EMPTY
                     .withColor(Formatting.AQUA)
                     .withUnderline(true)
-                    .withClickEvent(new ClickEvent.OpenUrl(URI.create(url)))));
+                    .withClickEvent(new ClickEvent.OpenUrl(java.net.URI.create(url)))));
             cursor = matcher.end();
         }
         if (cursor < raw.length()) {
@@ -186,11 +250,18 @@ public final class PhazeAnnouncements {
         return result;
     }
 
+    /**
+     * "Phaze Client · " in an emerald gradient, prepended to every
+     * announcement in chat.
+     *
+     * <p>Chat has no gradient support, so the effect is one styled
+     * component per character - fine for eleven characters, and the
+     * reason the gradient stops at the brand rather than running
+     * through the whole message.
+     */
     public static MutableText systemMessage(Text body) {
         MutableText result = brandPrefix();
-        if (body != null) {
-            result.append(body.copy());
-        }
+        if (body != null) result.append(body.copy());
         return result;
     }
 
@@ -210,6 +281,8 @@ public final class PhazeAnnouncements {
                             .withBold(true)));
         }
 
+        // Separator kept dim so the brand and the message read as two
+        // things rather than one long sentence.
         prefix.append(Text.literal(" · ")
                 .setStyle(Style.EMPTY.withColor(Formatting.DARK_GRAY)));
         return prefix;

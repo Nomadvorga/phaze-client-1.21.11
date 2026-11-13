@@ -35,13 +35,19 @@ public final class PhazeMixinPlugin implements IMixinConfigPlugin {
     private static final Set<String> SODIUM_ONLY = Set.of(
             "vorga.phazeclient.mixins.sodium.DefaultChunkRendererChunkAnimatorMixin",
             "vorga.phazeclient.mixins.sodium.ShaderParserChunkAnimatorMixin",
-            "vorga.phazeclient.mixins.sodium.SodiumGlShaderChunkAnimatorMixin"
+            "vorga.phazeclient.mixins.sodium.SodiumGlShaderChunkAnimatorMixin",
+            "vorga.phazeclient.mixins.sodium.SodiumBlockRendererWorldColorMixin",
+            "vorga.phazeclient.mixins.sodium.SodiumFluidRendererWorldColorMixin",
+            "vorga.phazeclient.mixins.sodium.SodiumCloudRendererWorldColorMixin"
     );
 
     private static final Set<String> REESES_ONLY = Set.of();
 
     private static final Set<String> IRIS_ONLY = Set.of(
-            "vorga.phazeclient.mixins.iris.IrisGlShaderChunkAnimatorMixin"
+            "vorga.phazeclient.mixins.iris.IrisGlShaderChunkAnimatorMixin",
+            "vorga.phazeclient.mixins.iris.IrisProgramWorldColorMixin",
+            "vorga.phazeclient.mixins.iris.IrisExtendedShaderWorldColorMixin",
+            "vorga.phazeclient.mixins.iris.IrisSkyColorUniformMixin"
     );
 
     private static final Set<String> SODIUM_EXTRA_ONLY = Set.of(

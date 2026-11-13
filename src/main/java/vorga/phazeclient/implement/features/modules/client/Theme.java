@@ -2,8 +2,8 @@ package vorga.phazeclient.implement.features.modules.client;
 
 import vorga.phazeclient.api.feature.module.Module;
 import vorga.phazeclient.api.feature.module.ModuleCategory;
-import vorga.phazeclient.api.feature.module.setting.implement.ColorSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.BooleanSetting;
+import vorga.phazeclient.api.feature.module.setting.implement.ColorSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.SelectSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.ValueSetting;
 import vorga.phazeclient.base.util.Lang;
@@ -23,6 +23,7 @@ public final class Theme extends Module {
 
     private ColorPalette currentPalette = new ThemeColorPalette(MenuPalettes.LUNAR_BLUE);
     private boolean guiScaleAdjustmentActive;
+    private boolean syncingGuiScale;
     private float pendingGuiScale = MenuUiSettings.DEFAULT_GUI_SCALE;
 
     public final SelectSetting menuTheme = new SelectSetting("Theme", "Menu & HUD theme preset")
@@ -57,7 +58,7 @@ public final class Theme extends Module {
             .setValue(16);
 
     public final ValueSetting guiScale = new ValueSetting("GUI Scale", "Scale the entire Phaze GUI")
-            .range(MenuUiSettings.MIN_GUI_SCALE, MenuUiSettings.MAX_GUI_SCALE)
+            .range(0.90F, MenuUiSettings.MAX_GUI_SCALE)
             .step(0.1F)
             .setValue(MenuUiSettings.DEFAULT_GUI_SCALE)
             .onChange(this::applyGuiScale);
@@ -70,6 +71,14 @@ public final class Theme extends Module {
             .noAlpha()
             .popupRow();
 
+    /**
+     * UI language for the menu's user-facing strings (modals, kebab
+     * popups, etc). English is the default; selecting Russian flips
+     * {@link Lang} to its RU table on the next render frame.
+     * Module / category names are NOT translated - the user
+     * explicitly asked for those to stay in their canonical English
+     * form regardless of locale.
+     */
     public final SelectSetting language = new SelectSetting("Language", "UI language for menu strings")
             .value(Lang.EN, Lang.RU)
             .selected(Lang.EN);
@@ -87,12 +96,22 @@ public final class Theme extends Module {
         renderOtherPlayerCosmetics.setFullWidth(true);
         setup(menuTheme, blurRadius, language, hudTextColor, guiScale, renderOtherPlayerCosmetics);
 
+        // Push the initial selection through to the Lang table so
+        // any code reading {@link Lang#t} during boot sees the
+        // configured locale, not the default. Subsequent changes
+        // are picked up on each modal render via syncLanguage().
         Lang.setActive(language.getSelected());
 
         applyTheme();
         applyMenuTheme();
     }
 
+    /**
+     * Re-syncs {@link Lang#setActive} with the SelectSetting's
+     * current value. Called from the modal's render path so a
+     * mid-game language switch takes effect immediately without a
+     * restart. Cheap (volatile write) so per-frame is fine.
+     */
     public void syncLanguage() {
         Lang.setActive(language.getSelected());
     }
@@ -117,17 +136,22 @@ public final class Theme extends Module {
 
     public float getMenuBlurRadius() {
         float value = blurRadius.getValue();
-
+        // Softer logarithmic scaling - the slider's upper half has
+        // strong diminishing returns so raw value 32 tops out around
+        // ~5.3 effective radius (previously ~8.75) instead of turning
+        // the backdrop into a mushy wash. Low values feel roughly the
+        // same because log1p stays near-linear there.
+        // value 0-32 -> effective blur 0-5.3 (non-linear)
         return (float) (Math.log1p(value) * 1.5);
     }
 
     public float getHudBlurQualityMultiplier() {
-
+        // Fixed quality = 70.0
         return 0.03f + (0.70f * 0.70f * 0.97f);
     }
 
     public int getHudBlurMode() {
-
+        // Fixed blur type = Kawase
         return 2;
     }
 
@@ -139,27 +163,46 @@ public final class Theme extends Module {
         return 0xFF000000 | (hudTextColor.getColor() & 0x00FFFFFF);
     }
 
+    /** Mirrors a scale set outside this setting (main menu slider, config load) without re-applying it. */
+    public void syncGuiScale(float value) {
+        syncingGuiScale = true;
+        try {
+            guiScale.setValue(value);
+            pendingGuiScale = guiScale.getValue();
+        } finally {
+            syncingGuiScale = false;
+        }
+    }
+
     private void applyGuiScale(float value) {
-        float clamped = Math.max(MenuUiSettings.MIN_GUI_SCALE, Math.min(MenuUiSettings.MAX_GUI_SCALE, value));
+        if (syncingGuiScale) return;
+        float clamped = Math.max(0.90F, Math.min(MenuUiSettings.MAX_GUI_SCALE, value));
         if (Float.compare(value, clamped) != 0) {
+            // Old configs may still contain the former 0.50 minimum.
+            // Keep the setting itself in sync with the effective menu value,
+            // otherwise its thumb/value can jump back to the stale number.
             guiScale.setValue(clamped);
             return;
         }
         pendingGuiScale = clamped;
-        if (!guiScaleAdjustmentActive) {
-            MenuUiSettings.getInstance().setGuiScale(clamped);
+        if (guiScaleAdjustmentActive) {
+            return;
         }
+        MenuUiSettings.getInstance().setGuiScale(clamped);
     }
 
+    /**
+     * Keeps the menu transform stable while its own scale slider is held.
+     * Applying the transform under the cursor feeds the newly-scaled mouse
+     * coordinate back into the slider and causes flicker/value oscillation.
+     */
     public void beginGuiScaleAdjustment() {
         guiScaleAdjustmentActive = true;
         pendingGuiScale = guiScale.getValue();
     }
 
     public void endGuiScaleAdjustment() {
-        if (!guiScaleAdjustmentActive) {
-            return;
-        }
+        if (!guiScaleAdjustmentActive) return;
         guiScaleAdjustmentActive = false;
         applyGuiScale(pendingGuiScale);
     }
@@ -171,7 +214,7 @@ public final class Theme extends Module {
 
     @Override
     public boolean isVisible() {
-        return false;
+        return false; // Hidden from module list, but accessible via search
     }
 
     @Override
@@ -184,7 +227,10 @@ public final class Theme extends Module {
     }
 
     public void applyTheme() {
-
+        // HUD palette is derived directly from the selected menu
+        // palette via ThemeColorPalette, so picking e.g. "Snow" in the
+        // dropdown automatically lightens HUD surfaces too. Previously
+        // the HUD was locked to DarkPalette regardless of selection.
         currentPalette = new ThemeColorPalette(getCurrentMenuPalette());
     }
 }

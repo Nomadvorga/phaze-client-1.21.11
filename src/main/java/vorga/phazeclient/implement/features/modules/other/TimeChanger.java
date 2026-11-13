@@ -1,5 +1,4 @@
 package vorga.phazeclient.implement.features.modules.other;
-
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.server.world.ServerWorld;
@@ -7,75 +6,60 @@ import net.minecraft.world.rule.GameRules;
 import vorga.phazeclient.api.feature.module.Module;
 import vorga.phazeclient.api.feature.module.ModuleCategory;
 import vorga.phazeclient.api.feature.module.setting.implement.ValueSetting;
-
 public final class TimeChanger extends Module {
     private static final TimeChanger INSTANCE = new TimeChanger();
     private boolean originalDaylightCycle = true;
     private long originalTime = -1;
     private int cooldownTicks = 0;
-
     public static TimeChanger getInstance() {
         return INSTANCE;
     }
-
     public final ValueSetting timeValue = new ValueSetting("Time", "Set world time (0-24000 ticks)");
-
     private TimeChanger() {
         super("time_changer", "Time Changer", ModuleCategory.OTHER, true, false);
         timeValue.range(0, 24000).setValue(12000);
         setup(timeValue);
-
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (cooldownTicks > 0) {
                 cooldownTicks--;
             }
         });
     }
-
     public boolean isTimeOverrideActive() {
         return isEnabled() && cooldownTicks == 0;
     }
-
     @Override
     public String getDescription() {
         return "Change the time of day in the world (client-side, works on any server)";
     }
-
     @Override
     public String getIcon() {
         return "time_changer.png";
     }
-
     @Override
     public float getIconSize() {
         return 21.0F;
     }
-
     @Override
     public boolean showIconInSettings() {
         return false;
     }
-
     @Override
     public void activate() {
         cooldownTicks = 0;
-
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.getServer() != null && client.world != null) {
             ServerWorld world = client.getServer().getWorld(client.world.getRegistryKey());
             if (world != null) {
                 originalTime = world.getTimeOfDay();
-
                 originalDaylightCycle = world.getGameRules().getValue(GameRules.ADVANCE_TIME);
                 world.getGameRules().setValue(GameRules.ADVANCE_TIME, false, client.getServer());
             }
         }
     }
-
     @Override
     public void deactivate() {
         cooldownTicks = 5;
-
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.getServer() != null && client.world != null) {
             ServerWorld world = client.getServer().getWorld(client.world.getRegistryKey());
@@ -84,7 +68,6 @@ public final class TimeChanger extends Module {
                     world.setTimeOfDay(originalTime);
                     originalTime = -1;
                 }
-
                 world.getGameRules().setValue(GameRules.ADVANCE_TIME, originalDaylightCycle, client.getServer());
             }
         }

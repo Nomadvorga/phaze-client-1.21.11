@@ -15,6 +15,8 @@ public final class ChatMessageAnimationRenderState {
         offset.dx = 0.0F;
         offset.dy = 0.0F;
 
+        if (ExordiumAnimationBridge.isCapturingChat()) return;
+
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || client.inGameHud == null
                 || !(client.inGameHud.getChatHud() instanceof ChatAnimationFrameAccess access)

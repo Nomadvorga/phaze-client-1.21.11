@@ -36,10 +36,16 @@ public final class ScreenBlit {
     }
 
     public static void blitOverMain(Framebuffer source) {
+        blitOverMain(source, FilterMode.NEAREST);
+    }
+
+    public static void blitOverMain(Framebuffer source, FilterMode filter) {
         if (source == null) {
             return;
         }
+        FilterMode sampler = filter == null ? FilterMode.NEAREST : filter;
         RenderSystem.assertOnRenderThread();
+        vorga.phazeclient.api.system.shape.batched.GuiBatch.flush();
 
         Framebuffer target = MinecraftClient.getInstance().getFramebuffer();
         if (target == null) {
@@ -48,14 +54,15 @@ public final class ScreenBlit {
 
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "phaze/screen blit",
-                target.getColorAttachmentView(),
+                RenderSystem.outputColorTextureOverride != null
+                        ? RenderSystem.outputColorTextureOverride : target.getColorAttachmentView(),
                 OptionalInt.empty())) {
             pass.setPipeline(PIPELINE);
             RenderSystem.bindDefaultUniforms(pass);
             pass.bindTexture(
                     "InSampler",
                     source.getColorAttachmentView(),
-                    RenderSystem.getSamplerCache().get(FilterMode.NEAREST));
+                    RenderSystem.getSamplerCache().get(sampler));
             pass.draw(0, 3);
         }
     }

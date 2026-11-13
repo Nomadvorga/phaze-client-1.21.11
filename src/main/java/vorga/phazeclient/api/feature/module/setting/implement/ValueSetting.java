@@ -1,13 +1,10 @@
 package vorga.phazeclient.api.feature.module.setting.implement;
-
 import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.Accessors;
 import vorga.phazeclient.api.feature.module.setting.Setting;
-
 import java.util.function.Consumer;
 import java.util.function.Supplier;
-
 @Getter
 @Setter
 @Accessors(chain = true)
@@ -16,44 +13,52 @@ public class ValueSetting extends Setting {
     private boolean integer;
     private Float defaultValue;
     private float step = 0.1f;
+    private float snapTarget;
+    private float snapRadius;
     private Consumer<Float> onChangeCallback;
-
     public ValueSetting(String name, String description) {
         super(name, description);
     }
-
     public ValueSetting range(float min, float max) {
         this.min = min;
         this.max = max;
         return this;
     }
-
     public ValueSetting range(int min, int max) {
         this.min = min;
         this.max = max;
         this.integer = true;
         return this;
     }
-
     public ValueSetting step(float step) {
         this.step = step;
         return this;
     }
-
+    public ValueSetting snapTo(float target, float radius) {
+        this.snapTarget = target;
+        this.snapRadius = Math.abs(radius);
+        return this;
+    }
+    public ValueSetting snapToDefault(float radius) {
+        return snapTo(defaultValue != null ? defaultValue : value, radius);
+    }
+    public float applySnap(float raw) {
+        if (snapRadius <= 0.0F) {
+            return raw;
+        }
+        return Math.abs(raw - snapTarget) <= snapRadius ? snapTarget : raw;
+    }
     public int getInt() {
         return (int) value;
     }
-
     public ValueSetting visible(Supplier<Boolean> visible) {
         setVisible(visible);
         return this;
     }
-
     public ValueSetting onChange(Consumer<Float> callback) {
         this.onChangeCallback = callback;
         return this;
     }
-
     public ValueSetting setValue(float value) {
         if (defaultValue == null) {
             defaultValue = value;
@@ -66,7 +71,6 @@ public class ValueSetting extends Setting {
         }
         return this;
     }
-
     @Override
     public boolean isModified() {
         if (defaultValue == null) {
@@ -74,11 +78,9 @@ public class ValueSetting extends Setting {
         }
         return this.value != defaultValue;
     }
-
     @Override
     public void reset() {
         if (defaultValue != null) {
-
             setValue(defaultValue);
         }
     }

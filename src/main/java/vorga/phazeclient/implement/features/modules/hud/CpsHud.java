@@ -12,7 +12,6 @@ public final class CpsHud extends RectHudModule {
 
     public final BooleanSetting showCpsText = new BooleanSetting("Show CPS Text", "Show or hide the CPS text").setValue(true);
     public final BooleanSetting rightClickCps = new BooleanSetting("Right Click CPS", "Show right click CPS alongside left click").setValue(false);
-    public final SectionSetting otherSection = new SectionSetting("Other");
     public final BooleanSetting reverseText = new BooleanSetting("Reverse Order", "Show value before label, e.g. \"5 CPS\" instead of \"CPS: 5\"").setValue(false);
 
     private CpsHud() {
@@ -20,10 +19,8 @@ public final class CpsHud extends RectHudModule {
         reverseText.setFullWidth(true);
         showCpsText.setFullWidth(true);
         rightClickCps.setFullWidth(true);
-        otherSection.visible(showCpsText::isValue);
-        reverseText.visible(showCpsText::isValue);
 
-        setup(showCpsText, rightClickCps, otherSection, reverseText, cornerRounding);
+        setup(showCpsText, rightClickCps, reverseText);
     }
 
     @Override

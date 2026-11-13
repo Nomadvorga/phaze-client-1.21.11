@@ -1,5 +1,4 @@
 package vorga.phazeclient.implement.features.modules.other;
-
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.sound.PositionedSoundInstance;
@@ -17,16 +16,13 @@ import vorga.phazeclient.api.feature.module.setting.implement.BooleanSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.SectionSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.ValueSetting;
 import vorga.phazeclient.base.util.PhazeAnnouncements;
-
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
-
 public final class ArmorNotifier extends Module {
     private static final ArmorNotifier INSTANCE = new ArmorNotifier();
     private static final long ALERT_COOLDOWN_MS = 4000L;
-
     public final SectionSetting generalSection = new SectionSetting("General");
     public final ValueSetting threshold = new ValueSetting(
             "Threshold (%)",
@@ -40,30 +36,21 @@ public final class ArmorNotifier extends Module {
             "Repeat",
             "Replay the alert (sound and chat line if enabled) several more times after the initial trigger"
     ).setValue(false);
-
     public final ValueSetting repetitions = new ValueSetting(
             "Number of Repetitions",
             "How many extra times the alert is replayed after the initial trigger"
     ).range(2, 10).setValue(3).visible(repeat::isValue);
-
     public final ValueSetting repeatDelay = new ValueSetting(
             "Repeat Delay",
             "Seconds between successive repeated alerts"
     ).range(3, 30).setValue(5).visible(repeat::isValue);
-
     private final Map<EquipmentSlot, Boolean> wasBelow = new EnumMap<>(EquipmentSlot.class);
-
     private final Map<EquipmentSlot, Integer> lastRemaining = new EnumMap<>(EquipmentSlot.class);
-
     private final Map<EquipmentSlot, String> lastName = new EnumMap<>(EquipmentSlot.class);
     private long lastAlertMs = 0L;
-
     private int pendingRepeats = 0;
-
     private long nextRepeatMs = 0L;
-
     private final List<EquipmentSlot> pendingSlots = new ArrayList<>(4);
-
     private ArmorNotifier() {
         super("armor_notifier", "Armor Notifier", ModuleCategory.UTILITIES);
         threshold.setFullWidth(true);
@@ -72,56 +59,43 @@ public final class ArmorNotifier extends Module {
         repetitions.setFullWidth(true);
         repeatDelay.setFullWidth(true);
         setup(generalSection, threshold, chatNotify, repeat, repetitions, repeatDelay);
-
         ClientTickEvents.END_CLIENT_TICK.register(this::tick);
     }
-
     public static ArmorNotifier getInstance() {
         return INSTANCE;
     }
-
     @Override
     public String getDescription() {
         return "Plays a sound when any armor piece drops below a durability threshold";
     }
-
     @Override
     public String getIcon() {
         return "armor_notifier.png";
     }
-
     @Override
     public float getIconSize() {
         return 21.0F;
     }
-
     @Override
     public void deactivate() {
         wasBelow.clear();
         lastRemaining.clear();
         lastName.clear();
-
         pendingRepeats = 0;
         pendingSlots.clear();
     }
-
     private void tick(MinecraftClient mc) {
         if (!isEnabled() || mc == null || mc.player == null) {
             return;
         }
-
         if (mc.isPaused()) {
             return;
         }
-
         long now = System.currentTimeMillis();
-
         float pct = threshold.getValue() / 100.0F;
         List<EquipmentSlot> newSlots = null;
         List<EquipmentSlot> brokenSlots = null;
-
         for (EquipmentSlot slot : EquipmentSlot.values()) {
-
             if (slot.getType() != EquipmentSlot.Type.HUMANOID_ARMOR) {
                 continue;
             }
@@ -129,7 +103,6 @@ public final class ArmorNotifier extends Module {
             int prevRem = lastRemaining.getOrDefault(slot, -1);
             boolean wasBelowFlag = wasBelow.getOrDefault(slot, false);
             boolean present = stack != null && !stack.isEmpty() && stack.getMaxDamage() > 0;
-
             if (present) {
                 int max = stack.getMaxDamage();
                 int rem = max - stack.getDamage();
@@ -143,10 +116,8 @@ public final class ArmorNotifier extends Module {
                 }
                 wasBelow.put(slot, below);
                 lastRemaining.put(slot, rem);
-
                 lastName.put(slot, stack.getName().getString());
             } else {
-
                 if (prevRem > 0 && wasBelowFlag) {
                     if (brokenSlots == null) {
                         brokenSlots = new ArrayList<>(4);
@@ -155,10 +126,8 @@ public final class ArmorNotifier extends Module {
                 }
                 wasBelow.put(slot, false);
                 lastRemaining.put(slot, -1);
-
             }
         }
-
         if (brokenSlots != null) {
             playBreakSound(mc);
             if (chatNotify.isValue()) {
@@ -172,7 +141,6 @@ public final class ArmorNotifier extends Module {
                 pendingRepeats = 0;
             }
         }
-
         if (pendingRepeats > 0) {
             pendingSlots.removeIf(s -> {
                 ItemStack st = mc.player.getEquippedStack(s);
@@ -182,7 +150,6 @@ public final class ArmorNotifier extends Module {
                 pendingRepeats = 0;
             }
         }
-
         if (pendingRepeats > 0 && now >= nextRepeatMs) {
             playPing(mc);
             if (chatNotify.isValue()) {
@@ -195,10 +162,8 @@ public final class ArmorNotifier extends Module {
                 }
             }
             pendingRepeats--;
-
             nextRepeatMs = now + (long) (repeatDelay.getValue() * 1000.0F);
         }
-
         if (newSlots != null) {
             if (now - lastAlertMs >= ALERT_COOLDOWN_MS) {
                 playPing(mc);
@@ -212,7 +177,6 @@ public final class ArmorNotifier extends Module {
                     }
                 }
                 lastAlertMs = now;
-
                 if (repeat.isValue()) {
                     pendingRepeats = repetitions.getInt();
                     nextRepeatMs = now + (long) (repeatDelay.getValue() * 1000.0F);
@@ -225,7 +189,6 @@ public final class ArmorNotifier extends Module {
             }
         }
     }
-
     private static String fallbackName(EquipmentSlot slot) {
         return switch (slot) {
             case HEAD -> "Helmet";
@@ -235,7 +198,6 @@ public final class ArmorNotifier extends Module {
             default -> "Armor";
         };
     }
-
     private static void sendAlmostBrokeMessage(MinecraftClient mc, String pieceName) {
         if (mc.inGameHud == null) {
             return;
@@ -243,7 +205,6 @@ public final class ArmorNotifier extends Module {
         MutableText body = Text.literal(pieceName + " almost broke!").formatted(Formatting.WHITE);
         mc.inGameHud.getChatHud().addMessage(PhazeAnnouncements.systemMessage(body));
     }
-
     private static void sendBrokeMessage(MinecraftClient mc, String pieceName) {
         if (mc.inGameHud == null) {
             return;
@@ -251,7 +212,6 @@ public final class ArmorNotifier extends Module {
         MutableText body = Text.literal(pieceName + " broke!").formatted(Formatting.RED);
         mc.inGameHud.getChatHud().addMessage(PhazeAnnouncements.systemMessage(body));
     }
-
     private boolean isBelowThreshold(ItemStack stack, float thresholdFraction) {
         if (stack == null || stack.isEmpty()) {
             return false;
@@ -264,25 +224,20 @@ public final class ArmorNotifier extends Module {
         float fraction = (float) remaining / (float) max;
         return fraction <= thresholdFraction;
     }
-
     private void playPing(MinecraftClient mc) {
         SoundManager soundManager = mc.getSoundManager();
         if (soundManager == null) {
             return;
         }
         SoundEvent sound = SoundEvents.BLOCK_NOTE_BLOCK_PLING.value();
-
         soundManager.play(PositionedSoundInstance.ui(sound, 1.6F, 0.9F));
     }
-
     private void playBreakSound(MinecraftClient mc) {
         SoundManager soundManager = mc.getSoundManager();
         if (soundManager == null) {
             return;
         }
-
         SoundEvent sound = SoundEvents.ENTITY_ITEM_BREAK.value();
-
         soundManager.play(PositionedSoundInstance.ui(sound, 1.0F, 1.0F));
     }
 }

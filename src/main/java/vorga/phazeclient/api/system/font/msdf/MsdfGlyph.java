@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.VertexFormatElement;
 import net.minecraft.client.render.BufferBuilder;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryUtil;
+import vorga.phazeclient.api.system.shape.batched.GuiBatch;
 
 public final class MsdfGlyph {
     private final float minU;
@@ -38,8 +39,25 @@ public final class MsdfGlyph {
         }
     }
 
+    private MsdfGlyph(MsdfGlyph source, float raise) {
+        this.minU = source.minU;
+        this.maxU = source.maxU;
+        this.minV = source.minV;
+        this.maxV = source.maxV;
+        this.advance = source.advance;
+        this.width = source.width;
+        this.height = source.height;
+        this.topPosition = source.topPosition + raise;
+    }
+
+    /** The same glyph drawn {@code raise} em higher, for characters an atlas lacks. */
+    MsdfGlyph raised(float raise) {
+        return new MsdfGlyph(this, raise);
+    }
+
     public float apply(Matrix4f matrix, BufferBuilder consumer, float size, float x, float y, float z, int color,
                        VertexFormatElement paramsElement, float range, float thickness, float smoothness) {
+        if (width <= 0 || height <= 0) return advance * size;
         y -= this.topPosition * size;
         float scaledWidth = this.width * size;
         float scaledHeight = this.height * size;
@@ -56,6 +74,15 @@ public final class MsdfGlyph {
         return this.advance * size;
     }
 
+    /** {@link #apply} for a batch run. Glyphs without ink emit nothing. */
+    float emit(Matrix4f matrix, GuiBatch.Run run, float size, float x, float y, float z, int color) {
+        if (this.width > 0.0F && this.height > 0.0F) {
+            run.quad(matrix, x, y - this.topPosition * size, this.width * size, this.height * size, z,
+                    this.minU, this.minV, this.maxU, this.maxV, color, 0);
+        }
+        return this.advance * size;
+    }
+
     private static void writeParams(BufferBuilder buffer, VertexFormatElement element,
                                     float range, float thickness, float smoothness) {
         long ptr = buffer.beginElement(element);
@@ -68,4 +95,6 @@ public final class MsdfGlyph {
     public float getWidth(float size) {
         return this.advance * size;
     }
+
+    public float getPlaneWidth() { return width; }
 }

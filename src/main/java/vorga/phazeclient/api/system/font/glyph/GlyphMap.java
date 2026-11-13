@@ -2,7 +2,6 @@ package vorga.phazeclient.api.system.font.glyph;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import it.unimi.dsi.fastutil.chars.Char2ObjectArrayMap;
-import lombok.SneakyThrows;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
@@ -11,34 +10,35 @@ import net.minecraft.util.math.ColorHelper;
 import org.lwjgl.system.MemoryUtil;
 
 import java.awt.*;
-import java.awt.font.FontRenderContext;
-import java.awt.geom.AffineTransform;
-import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.awt.image.ColorModel;
 import java.awt.image.DataBuffer;
 import java.awt.image.WritableRaster;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 import static java.awt.RenderingHints.*;
 import static net.minecraft.client.texture.NativeImage.Format.*;
 
-public class GlyphMap {
+public class GlyphMap implements AutoCloseable {
+    private static final java.util.Set<GlyphMap> LIVE_ATLASES = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     private final Char2ObjectArrayMap<Glyph> glyphs = new Char2ObjectArrayMap<>();
-    private final char fromIncl, toExcl;
-    private final Font font;
+    private final int fromIncl, toExcl;
+    private final FontGlyphMetrics metrics;
     public final Identifier bindToTexture;
     private final int pixelPadding;
     public int width, height;
     private boolean generated = false;
 
     public GlyphMap(char from, char to, Font font, Identifier identifier, int padding) {
+        this(from, to == 0 && from != 0 ? 65536 : to, new FontGlyphMetrics(font), identifier, padding);
+    }
+
+    public GlyphMap(int from, int to, FontGlyphMetrics metrics, Identifier identifier, int padding) {
         this.fromIncl = from;
         this.toExcl = to;
-        this.font = font;
+        this.metrics = metrics;
         this.bindToTexture = identifier;
         this.pixelPadding = padding;
     }
@@ -52,14 +52,8 @@ public class GlyphMap {
         return c >= fromIncl && c < toExcl;
     }
 
-    private Font getFontForGlyph(char c) {
-        if (font.canDisplay(c)) return font;
-        return Arrays.stream(GraphicsEnvironment.getLocalGraphicsEnvironment().getAllFonts()).filter(f -> f.canDisplay(c))
-                .map(f -> new Font(f.getFontName(), Font.BOLD, font.getSize()))
-                .findFirst().orElse(new Font("SansSerif", Font.BOLD, 0));
-    }
-
     public void generate() {
+        RenderSystem.assertOnRenderThread();
         if (generated) return;
 
         int range = toExcl - fromIncl - 1;
@@ -73,21 +67,13 @@ public class GlyphMap {
         int currentRowMaxY = 0;
 
         List<Glyph> glyphs1 = new ArrayList<>();
-        AffineTransform affineTransform = new AffineTransform();
-        FontRenderContext fontRenderContext = new FontRenderContext(affineTransform, true, false);
 
         while (generatedChars <= range) {
             char currentChar = (char) (fromIncl + generatedChars);
-            Font font = getFontForGlyph(currentChar);
-
-            Rectangle2D stringBounds = font.getStringBounds(String.valueOf(currentChar), fontRenderContext);
-
-            int width = (int) Math.ceil(stringBounds.getWidth());
-            int height = (int) Math.ceil(stringBounds.getHeight());
+            FontGlyphMetrics.Metric metric = metrics.get(currentChar);
+            int width = metric.width();
+            int height = metric.height();
             generatedChars++;
-
-            maxX = Math.max(maxX, currentX + width);
-            maxY = Math.max(maxY, currentY + height);
 
             if (charNX >= charsVert) {
                 currentX = 0;
@@ -95,6 +81,9 @@ public class GlyphMap {
                 charNX = 0;
                 currentRowMaxY = 0;
             }
+
+            maxX = Math.max(maxX, currentX + width);
+            maxY = Math.max(maxY, currentY + height);
 
             currentRowMaxY = Math.max(currentRowMaxY, height);
             glyphs1.add(new Glyph(currentX, currentY, width, height, currentChar, this));
@@ -113,6 +102,7 @@ public class GlyphMap {
         height = bufferedImage.getHeight();
 
         Graphics2D g2d = bufferedImage.createGraphics();
+        try {
         g2d.setColor(new Color(255, 255, 255, 0));
         g2d.fillRect(0, 0, width, height);
         g2d.setColor(Color.WHITE);
@@ -122,23 +112,27 @@ public class GlyphMap {
         g2d.setRenderingHint(KEY_TEXT_ANTIALIASING, VALUE_TEXT_ANTIALIAS_ON);
 
         for (Glyph glyph : glyphs1) {
-            g2d.setFont(getFontForGlyph(glyph.value()));
+            g2d.setFont(metrics.get(glyph.value()).font());
             FontMetrics fontMetrics = g2d.getFontMetrics();
             g2d.drawString(String.valueOf(glyph.value()), glyph.u(), glyph.v() + fontMetrics.getAscent());
             glyphs.put(glyph.value(), glyph);
         }
-
-        registerBufferedImageTexture(bindToTexture, bufferedImage);
-        generated = true;
+        } finally { g2d.dispose(); }
+        try {
+            registerBufferedImageTexture(bindToTexture, bufferedImage);
+            generated = true;
+            LIVE_ATLASES.add(this);
+        } finally { bufferedImage.flush(); }
     }
 
-    @SneakyThrows
     public static void registerBufferedImageTexture(Identifier textureIdentifier, BufferedImage inputImage) {
+        RenderSystem.assertOnRenderThread();
         int imageWidth = inputImage.getWidth();
         int imageHeight = inputImage.getHeight();
 
         NativeImage nativeImage = new NativeImage(RGBA, imageWidth, imageHeight, false);
-
+        boolean transferred = false;
+        try {
         IntBuffer buffer = MemoryUtil.memIntBuffer(nativeImage.pointer, nativeImage.getWidth() * nativeImage.getHeight());
 
         WritableRaster raster = inputImage.getRaster();
@@ -157,17 +151,43 @@ public class GlyphMap {
             }
         }
 
-        if (RenderSystem.isOnRenderThread()) {
+            transferred = true;
             uploadAndRegister(textureIdentifier, nativeImage);
-        } else {
-            MinecraftClient.getInstance().execute(() -> uploadAndRegister(textureIdentifier, nativeImage));
-        }
+        } finally { if (!transferred) nativeImage.close(); }
     }
 
     private static void uploadAndRegister(Identifier textureIdentifier, NativeImage nativeImage) {
-        NativeImageBackedTexture texture = new NativeImageBackedTexture(textureIdentifier::toString, nativeImage);
-        texture.upload();
-        MinecraftClient.getInstance().getTextureManager().registerTexture(textureIdentifier, texture);
+        NativeImageBackedTexture texture;
+        try { texture = new NativeImageBackedTexture(textureIdentifier::toString, nativeImage); }
+        catch (RuntimeException | Error failure) { nativeImage.close(); throw failure; }
+        try {
+            texture.upload();
+            MinecraftClient.getInstance().getTextureManager().registerTexture(textureIdentifier, texture);
+        } catch (RuntimeException | Error failure) {
+            try { texture.close(); } catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+    }
+
+    @Override public void close() {
+        RenderSystem.assertOnRenderThread();
+        if (!generated) return;
+        generated = false;
+        LIVE_ATLASES.remove(this);
+        MinecraftClient.getInstance().getTextureManager().destroyTexture(bindToTexture);
+    }
+
+    public static void clearAll() {
+        RenderSystem.assertOnRenderThread();
+        Throwable failure = null;
+        for (GlyphMap map : List.copyOf(LIVE_ATLASES)) {
+            try { map.close(); }
+            catch (RuntimeException | Error problem) {
+                if (failure == null) failure = problem; else failure.addSuppressed(problem);
+            }
+        }
+        if (failure instanceof Error error) throw error;
+        if (failure instanceof RuntimeException exception) throw exception;
     }
 
     private static Object createDataArrayBasedOnRaster(WritableRaster raster) {

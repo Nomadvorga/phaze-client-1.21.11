@@ -14,11 +14,14 @@ import vorga.phazeclient.implement.menu.components.AbstractComponent;
 @Getter
 @RequiredArgsConstructor
 public abstract class AbstractSettingComponent extends AbstractComponent {
+    public static final float ROW_HEIGHT = 23.5F;
+    { height = ROW_HEIGHT; }
     private final Setting setting;
     private final Animation visibilityAnimation = new DecelerateAnimation().setMs(1).setValue(1);
-    private final Animation textOffsetAnimation = new DecelerateAnimation().setMs(140).setValue(1);
+    private final Animation textOffsetAnimation = new DecelerateAnimation().setMs(SettingLabelState.WIDTH_TRANSITION_MS).setValue(1);
     private final Animation cardHoverAnimation = new DecelerateAnimation().setMs(170).setValue(1);
     protected final ResetIconComponent resetIcon = new ResetIconComponent();
+    protected final SettingLabel label = new SettingLabel();
     private boolean textOffsetInitialized = false;
 
     public float currentAlpha = 1.0f;
@@ -102,11 +105,16 @@ public abstract class AbstractSettingComponent extends AbstractComponent {
             textOffsetInitialized = true;
         }
         textOffsetAnimation.setDirection(modified ? Direction.FORWARDS : Direction.BACKWARDS);
-        return ResetIconComponent.getTextOffset() * textOffsetAnimation.getOutputFloat();
+        float offset = ResetIconComponent.getTextOffset() * textOffsetAnimation.getOutputFloat();
+        label.setAnimatedTextInset(offset);
+        return offset;
     }
 
     protected float animatedCardHover(boolean hovered) {
         cardHoverAnimation.setDirection(hovered ? Direction.FORWARDS : Direction.BACKWARDS);
         return cardHoverAnimation.getOutputFloat();
+    }
+    protected void updateLabelHover(int mouseX, int mouseY) {
+        label.updateHover(setting.isVisible() && mouseX >= x && mouseX < x + width && mouseY >= y && mouseY < y + height);
     }
 }

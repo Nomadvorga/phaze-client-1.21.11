@@ -14,6 +14,7 @@ import vorga.phazeclient.api.system.animation.implement.DecelerateAnimation;
 import vorga.phazeclient.api.system.font.msdf.MsdfFonts;
 import vorga.phazeclient.api.system.font.msdf.MsdfRenderer;
 import vorga.phazeclient.api.system.shape.ShapeProperties;
+import vorga.phazeclient.api.system.shape.batched.BatchedRectangle;
 import vorga.phazeclient.base.util.Lang;
 import vorga.phazeclient.base.util.math.MathUtil;
 import vorga.phazeclient.implement.config.ConfigManager;
@@ -100,6 +101,10 @@ public class ConfigsViewComponent extends AbstractComponent {
         return open || openAnim.getOutputFloat() > 0.001F;
     }
 
+    public boolean isActive() { return open; }
+
+    public boolean shouldRender() { return isOpen(); }
+
     private void refreshMetadataCaches() {
         timestampCache.clear();
         sizeCache.clear();
@@ -171,6 +176,7 @@ public class ConfigsViewComponent extends AbstractComponent {
         if (scrollOffset < 0.0F) scrollOffset = 0.0F;
         if (scrollOffset > maxScrollOffset) scrollOffset = maxScrollOffset;
 
+        BatchedRectangle.flushIfBatching();
         context.enableScissor((int) listX, (int) listY,
                 (int) (listX + listW), (int) listBottom);
         vorga.phazeclient.base.util.render.ScissorManager scissorManager =
@@ -186,6 +192,7 @@ public class ConfigsViewComponent extends AbstractComponent {
                 rowY += ROW_HEIGHT + ROW_GAP;
             }
         } finally {
+            BatchedRectangle.flushIfBatching();
             context.disableScissor();
             scissorManager.pop();
         }

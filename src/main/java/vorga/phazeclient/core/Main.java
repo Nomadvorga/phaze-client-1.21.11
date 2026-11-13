@@ -58,10 +58,6 @@ public class Main implements ModInitializer {
         return instance;
     }
 
-    public ScissorManager getScissorManager() {
-        return scissorManager;
-    }
-
     @Override
     public void onInitialize() {
         HolyWorldFeatureControlService.getInstance().init();
@@ -157,8 +153,8 @@ public class Main implements ModInitializer {
         if (moduleProvider.get(vorga.phazeclient.implement.features.modules.hud.InventoryHud.class) == null) {
             moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.hud.InventoryHud.getInstance());
         }
-        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.hud.PlayerModelHud.class) == null) {
-            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.hud.PlayerModelHud.getInstance());
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.hud.PaperDoll.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.hud.PaperDoll.getInstance());
         }
         if (moduleProvider.get(vorga.phazeclient.implement.features.modules.hud.TpsHud.class) == null) {
             moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.hud.TpsHud.getInstance());
@@ -305,6 +301,9 @@ public class Main implements ModInitializer {
         if (moduleProvider.get(vorga.phazeclient.implement.features.modules.other.ChangeHand.class) == null) {
             moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.other.ChangeHand.getInstance());
         }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.other.OldAnimations.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.other.OldAnimations.getInstance());
+        }
         if (moduleProvider.get(vorga.phazeclient.implement.features.modules.other.HitRange.class) == null) {
             moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.other.HitRange.getInstance());
         }
@@ -335,13 +334,69 @@ public class Main implements ModInitializer {
         if (moduleProvider.get(ScoreboardHud.class) == null) {
             moduleProvider.getModules().add(ScoreboardHud.getInstance());
         }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.other.TntCountdown.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.other.TntCountdown.getInstance());
+        }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.other.ShinyPots.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.other.ShinyPots.getInstance());
+        }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.other.KillSounds.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.other.KillSounds.getInstance());
+        }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.other.LowHealthWarning.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.other.LowHealthWarning.getInstance());
+        }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.hud.KillStreakHud.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.hud.KillStreakHud.getInstance());
+        }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.hud.PackDisplayHud.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.hud.PackDisplayHud.getInstance());
+        }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.hud.BossBarHud.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.hud.BossBarHud.getInstance());
+        }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.other.ChunkBorders.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.other.ChunkBorders.getInstance());
+        }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.other.Waypoints.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.other.Waypoints.getInstance());
+        }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.other.PackOrganizer.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.other.PackOrganizer.getInstance());
+        }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.other.GlintColorizer.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.other.GlintColorizer.getInstance());
+        }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.other.ThreeDSkins.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.other.ThreeDSkins.getInstance());
+        }
+        if (moduleProvider.get(vorga.phazeclient.implement.features.modules.other.WaveCapes.class) == null) {
+            moduleProvider.getModules().add(vorga.phazeclient.implement.features.modules.other.WaveCapes.getInstance());
+        }
 
         configManager.loadCurrentConfig();
 
+        // Auto-save: every Setting.notifyChange() (BindSetting.setKey,
+        // BooleanSetting.setValue, sliders, color pickers, ...) flips the
+        // dirty flag; flushIfDirty drains it on a tick if the debounce
+        // window has elapsed. Listener is wired AFTER loadCurrentConfig so
+        // load-time setValue calls don't immediately mark the config dirty.
         vorga.phazeclient.api.feature.module.setting.Setting.setGlobalChangeListener(
                 setting -> configManager.markDirty()
         );
-
+        // Module enable / disable + keybind changes go through a
+        // separate state-change channel (Module.notifyStateChange);
+        // persist it synchronously so a toggle/key change survives a
+        // crash even before the next tick or the debounce deadline.
+        // Without this, the `globalStateChangeListener` is null, so
+        // toggling a module never marks the config dirty, and on a
+        // crash within ~250ms of the toggle (or before the user makes
+        // any OTHER auto-saved change), the enabled state on disk
+        // remains stale - the exact "modules turn off on crash"
+        // symptom users hit. Hooking it AFTER loadCurrentConfig is
+        // critical: load-time setStateSilent calls would otherwise
+        // immediately re-mark the config dirty and trigger a save
+        // pass that overwrites the just-loaded data.
         vorga.phazeclient.api.feature.module.Module.setGlobalStateChangeListener(
                 module -> configManager.flushNow()
         );
@@ -349,28 +404,43 @@ public class Main implements ModInitializer {
         net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(
                 client -> configManager.flushIfDirty()
         );
-
+        // Last-chance save on JVM shutdown. Catches Alt+F4 / window
+        // close / SIGTERM that ClientLifecycleEvents.CLIENT_STOPPING
+        // doesn't fire on, so any change made within the debounce
+        // window before a hard exit still persists. Hard kills (kill
+        // -9 / process tree termination from Task Manager) bypass
+        // shutdown hooks, but those are not recoverable in any
+        // user-mode code.
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
-                configManager.saveCurrentConfig();
+                configManager.saveOnShutdown();
             } catch (Throwable ignored) {
-
+                // Shutdown hooks must never throw - the JVM is already
+                // tearing down and any exception here is unobservable.
             }
         }, "phaze-config-shutdown"));
 
+        // Final save on game close. The tick-based debounce can miss a
+        // change made within ~250ms of quitting; this catches it. The
+        // shared final-save barrier makes the JVM hook a no-op after a
+        // successful clean stop (and lets it retry a failed final write).
         net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents.CLIENT_STOPPING.register(
-                client -> configManager.saveCurrentConfig()
+                client -> configManager.saveOnShutdown()
         );
-
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try {
-                configManager.saveCurrentConfig();
-            } catch (Throwable ignored) {
-            }
-        }, "Phaze-ShutdownSave"));
 
         discordManager.init();
 
+        // Kick off the remote-rules poller. It runs on a daemon thread,
+        // is fail-open (network errors -> no extra blocks), and feeds
+        // Module#isServerLocked so any rule pushed from the admin panel
+        // takes effect within ~60s without the player relogging.
+        // Override the API base with -Dphaze.rules.api=https://... ;
+        // setting it to "" disables the service entirely (offline dev).
         vorga.phazeclient.base.util.RemoteRulesService.getInstance().start();
+
+        // Warm the messenger while Minecraft continues loading. All network
+        // work uses daemon executors inside MessengerService, so startup and
+        // the first world join are never blocked by a slow API connection.
+        vorga.phazeclient.base.util.MessengerService.getInstance().start();
     }
 }

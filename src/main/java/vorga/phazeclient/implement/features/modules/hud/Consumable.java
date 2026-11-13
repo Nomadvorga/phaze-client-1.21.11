@@ -69,10 +69,10 @@ public final class Consumable extends RectHudModule {
         displaySection.setFullWidth(true);
         layout.setFullWidth(true);
         showCount.setFullWidth(true);
-        setup(itemsSection, itemTypes, displaySection, layout, showCount, otherSection, cornerRounding);
+        setup(itemsSection, itemTypes, displaySection, layout, showCount);
     }
 
-    public record IconEntry(ItemStack stack, int row, int col) {}
+    public record IconEntry(ItemStack stack, int row, float col) {}
 
     public record Layout(List<IconEntry> entries, int cols, int rows, float baseWidth, float baseHeight) {}
 
@@ -91,21 +91,15 @@ public final class Consumable extends RectHudModule {
         for (String type : selected) {
             Item item = ITEM_MAP.get(type);
             if (item == null) continue;
-            if (chatEditing) {
-                fallbackStacks.add(new ItemStack(item, 1));
-                continue;
-            }
             int count = countItem(client, item);
             if (count > 0) {
                 presentStacks.add(new ItemStack(item, count));
-            } else {
-                fallbackStacks.add(new ItemStack(item, 1));
             }
+            fallbackStacks.add(new ItemStack(item, 1));
         }
 
-        List<ItemStack> visibleStacks = chatEditing
-                ? fallbackStacks
-                : (presentStacks.isEmpty() ? fallbackStacks : presentStacks);
+        List<ItemStack> visibleStacks = !presentStacks.isEmpty()
+                ? presentStacks : (chatEditing ? fallbackStacks : new ArrayList<>());
 
         if (visibleStacks.isEmpty() && chatEditing) {
             visibleStacks.add(new ItemStack(Items.GOLDEN_APPLE, 1));
@@ -130,7 +124,13 @@ public final class Consumable extends RectHudModule {
             int r, c;
             switch (layout.getSelected()) {
                 case "Column" -> { r = i; c = 0; }
-                case "Table" -> { r = i / cols; c = i % cols; }
+                case "Table" -> {
+                    r = i / cols;
+                    int itemsInRow = Math.min(cols, n - r * cols);
+                    c = i % cols;
+                    entries.add(new IconEntry(visibleStacks.get(i), r, c + (cols - itemsInRow) / 2.0F));
+                    continue;
+                }
                 default      -> { r = 0;     c = i; }
             }
             entries.add(new IconEntry(visibleStacks.get(i), r, c));

@@ -102,6 +102,12 @@ public class Module extends SettingRepository implements QuickImports {
     @NonFinal
     public boolean expanded = false;
 
+    /** True while a server lock keeps this module inactive; {@link #state} stays the player's choice. */
+    @NonFinal
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    boolean serverSuppressed;
+
     @Setter
     private static Consumer<Module> globalStateChangeListener;
 
@@ -148,9 +154,60 @@ public class Module extends SettingRepository implements QuickImports {
         }
     }
 
+    /**
+     * Applies a saved on/off choice from a config or profile. While the server
+     * locks the module the choice is only remembered: the module stays inactive
+     * and hidden until the lock lifts, but the next save does not lose it.
+     */
+    public void restoreState(boolean state) {
+        restoreState(state, false);
+    }
+
+    public void restoreStateSilent(boolean state) {
+        restoreState(state, true);
+    }
+
+    private void restoreState(boolean state, boolean silent) {
+        if (state && isServerLocked()) {
+            syncServerLock();
+            this.state = true;
+            return;
+        }
+        if (silent) {
+            setStateSilent(state);
+        } else {
+            setState(state);
+        }
+    }
+
+    /**
+     * Called every client tick. Runs the module's deactivate/activate hooks when a
+     * server lock starts or ends without rewriting {@link #state}, so a lock never
+     * turns modules off in the player's saved config.
+     */
+    public void syncServerLock() {
+        boolean locked = isServerLocked();
+        if (locked == serverSuppressed) {
+            return;
+        }
+        serverSuppressed = locked;
+        if (!showEnable || !state) {
+            return;
+        }
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.player == null || mc.world == null) {
+            return;
+        }
+        if (locked) {
+            deactivate();
+        } else {
+            activate();
+        }
+    }
+
     private void handleStateChange() {
         MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.player != null && mc.world != null) {
+        if (mc.player != null && mc.world != null && !serverSuppressed) {
             if (state) {
                 activate();
             } else {
@@ -161,7 +218,7 @@ public class Module extends SettingRepository implements QuickImports {
     }
 
     private void toggleSilent(boolean activate) {
-
+        /* REMOVED - EventManager calls removed */
     }
 
     private void initializeModule() {
@@ -177,8 +234,13 @@ public class Module extends SettingRepository implements QuickImports {
         return !showEnable || state;
     }
 
+    /** Initial state for fresh configs; a saved state still takes priority. */
     public boolean isDefaultStateOn() {
         return false;
+    }
+
+    public boolean isEnabledByDefault() {
+        return isDefaultStateOn();
     }
 
     public boolean isVisible() {
@@ -228,7 +290,14 @@ public class Module extends SettingRepository implements QuickImports {
 
     @Deprecated
     public String getLocalizedName() {
+        // Module titles stay canonical in both the grid and settings header.
+        // Only descriptions and the settings inside a module are localized.
         return getVisibleName();
+    }
+
+    /** Display-only description; raw English text remains the config key. */
+    public String getDisplayDescription() {
+        return vorga.phazeclient.base.util.Lang.translate(getDescription());
     }
 
     public String getDescription() {
@@ -259,10 +328,34 @@ public class Module extends SettingRepository implements QuickImports {
         return extractModuleContext(name);
     }
 
+    /**
+     * Returns true if this module is allowed to operate on the currently connected server
+     * <em>per the local whitelist</em>. Override in subclasses that should be restricted to
+     * specific servers (see ItemScroller / AutoSwap / etc. for examples).
+     *
+     * <p>This method intentionally does <strong>not</strong> consult the remote-rules API -
+     * subclasses overriding it shouldn't have to know about remote rules. The composite
+     * "is the module actually usable right now?" check lives in {@link #isServerLocked()}.
+     */
     public boolean isServerAllowed() {
         return true;
     }
 
+    /**
+     * True if the module is locked on the current server. A module is locked when either
+     * the local whitelist forbids it (subclass override of {@link #isServerAllowed()})
+     * <em>or</em> the remote rules API has blocked the module's identifier for the
+     * current host. The GUI uses this for the "LOCKED" badge and {@code
+     * ClientPlayerEntityMixin#phaze$enforceServerLocks} uses it to auto-disable any
+     * active module that becomes locked at runtime.
+     *
+     * <p>Server-based locks are skipped entirely in singleplayer / when the player isn't
+     * connected to anything: there's no realistic threat model there (no other players,
+     * no anti-cheat, no economy), and forcing modules off in your own world is the
+     * opposite of what the user wants. The one exception is the explicit offline
+     * fallback hide-list used when the Phaze rules backend is unavailable outside
+     * singleplayer.
+     */
     public boolean isServerLocked() {
         if (RemoteRulesService.getInstance().shouldHideModuleWhenOffline(getIdentifier())) {
             return true;
@@ -271,8 +364,16 @@ public class Module extends SettingRepository implements QuickImports {
         if (host == null || host.isEmpty()) {
             return false;
         }
+
         String identifier = getIdentifier();
 
+        // An explicit allow from the admin panel outranks the local
+        // whitelists. Those lists are compiled into the jar and go
+        // stale the moment a server is added; the API answer is
+        // current and specific to this host, so when the operator says
+        // a module is fine here, it is fine here. Without this the
+        // panel could only ever add locks, never lift one, and adding
+        // support for a new server meant shipping a new build.
         if (RemoteRulesService.getInstance().isModuleExplicitlyAllowed(identifier)) {
             return false;
         }

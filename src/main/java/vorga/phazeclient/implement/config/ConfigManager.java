@@ -21,51 +21,86 @@ import vorga.phazeclient.api.feature.module.setting.implement.TextSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.ValueSetting;
 import vorga.phazeclient.core.Main;
 import vorga.phazeclient.implement.features.modules.hud.ArmorHud;
+import vorga.phazeclient.implement.features.modules.hud.BossBarHud;
 import vorga.phazeclient.implement.features.modules.hud.RectHudModule;
 import vorga.phazeclient.implement.menu.MenuUiSettings;
 
-import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.Reader;
+import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 public final class ConfigManager {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final ConfigManager INSTANCE = new ConfigManager();
+    private static final class Holder {
+        private static final ConfigManager INSTANCE = new ConfigManager();
+    }
 
     private final File configDir;
     private final File configsDir;
     private final File filesDir;
     private final File currentConfigFile;
+    private final Supplier<List<Module>> moduleSupplier;
     private File currentConfig;
     private String currentConfigName = "default";
+    private boolean shutdownSaved;
 
+    // One reentrant monitor covers snapshots, file publication and config
+    // switches. Keep immediate saves synchronous: queueing toggles behind a
+    // worker would weaken their existing crash-persistence guarantee.
+
+    // Debounced auto-save state. The global Setting change listener flips
+    // dirtyAt to System.currentTimeMillis(); flushIfDirty (called once per
+    // tick) actually writes when the dirty timer is older than the debounce
+    // window. This avoids spamming disk during slider drags or rapid bind
+    // re-presses while still guaranteeing single-action settings persist.
     private static final long AUTOSAVE_DEBOUNCE_MS = 250L;
     private volatile long dirtyAt = 0L;
     private volatile boolean autoSaveEnabled = false;
-
+    /** True while {@link #loadConfigInternal} is mid-flight. The
+     *  global Setting / Module change listeners route through
+     *  {@link #markDirty} / {@link #flushNow}; without this guard the
+     *  in-load resets would either:
+     *  <ul>
+     *    <li>(via Module.switchState → flushNow) immediately overwrite
+     *        the OUTGOING file with the freshly-blanked in-memory
+     *        state - exactly the "all settings reset" symptom users
+     *        hit after one config switch;</li>
+     *    <li>(via Setting.setValue → markDirty) start the debounce
+     *        timer mid-load, so the next tick after the load
+     *        completes would write the partly-applied state back to
+     *        disk before the user could change anything.</li>
+     *  </ul>
+     *  Mirrors soup's {@code isLoadingConfig} flag.
+     */
     private volatile boolean isLoadingConfig = false;
 
     public static ConfigManager getInstance() {
-        return INSTANCE;
+        return Holder.INSTANCE;
     }
 
     private ConfigManager() {
-        File minecraftDir = MinecraftClient.getInstance().runDirectory;
+        this(MinecraftClient.getInstance().runDirectory,
+                () -> Main.getInstance().getModuleProvider().getModules());
+    }
+
+    /** Isolated storage/module source for offline config regression checks. */
+    ConfigManager(File minecraftDir, Supplier<List<Module>> moduleSupplier) {
+        this.moduleSupplier = moduleSupplier;
         configDir = new File(minecraftDir, "Phaze");
         configsDir = new File(configDir, "configs");
         filesDir = new File(configDir, "files");
@@ -89,36 +124,31 @@ public final class ConfigManager {
     }
 
     private void loadCurrentConfigName() {
-        if (currentConfigFile.exists()) {
-            try (BufferedReader reader = new BufferedReader(new FileReader(currentConfigFile))) {
-                JsonObject json = GSON.fromJson(reader, JsonObject.class);
-                if (json != null && json.has("current_config")) {
-                    currentConfigName = json.get("current_config").getAsString();
-                }
-                if (currentConfigName == null || currentConfigName.isEmpty()) {
-                    currentConfigName = "default";
-                }
-            } catch (IOException e) {
-                currentConfigName = "default";
+        JsonObject json = readConfigFile(currentConfigFile);
+        if (json == null) {
+            json = readConfigFile(new File(filesDir, currentConfigFile.getName() + ".bak"));
+        }
+        try {
+            if (json != null && json.has("current_config")) {
+                currentConfigName = json.get("current_config").getAsString();
             }
+            if (currentConfigName == null || currentConfigName.isEmpty()) currentConfigName = "default";
+        } catch (RuntimeException ignored) {
+            currentConfigName = "default";
         }
     }
 
-    private void saveCurrentConfigName() {
-        try (FileWriter writer = new FileWriter(currentConfigFile)) {
-            JsonObject json = new JsonObject();
-            json.addProperty("current_config", currentConfigName);
-            GSON.toJson(json, writer);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+    private boolean saveCurrentConfigName() {
+        JsonObject json = new JsonObject();
+        json.addProperty("current_config", currentConfigName);
+        return writeConfigJson(currentConfigFile, json, false);
     }
 
-    public String getCurrentConfigName() {
+    public synchronized String getCurrentConfigName() {
         return currentConfigName;
     }
 
-    public void setCurrentConfigName(String name) {
+    public synchronized void setCurrentConfigName(String name) {
         this.currentConfigName = name;
         saveCurrentConfigName();
     }
@@ -131,94 +161,90 @@ public final class ConfigManager {
         return new File(configsDir, configName + ".Phaze");
     }
 
-    public void save(File configFile) {
-        JsonObject config = new JsonObject();
-        JsonObject modules = new JsonObject();
-
-        for (Module module : Main.getInstance().getModuleProvider().getModules()) {
-            JsonObject moduleData = new JsonObject();
-            moduleData.addProperty("enabled", module.isState());
-            moduleData.addProperty("key", module.getKey());
-
-            if (module instanceof RectHudModule rectHudModule) {
-                moduleData.addProperty("hud_x", rectHudModule.getHudX());
-                moduleData.addProperty("hud_y", rectHudModule.getHudY());
-                moduleData.addProperty("hud_x_ratio", rectHudModule.getHudXRatio());
-                moduleData.addProperty("hud_y_ratio", rectHudModule.getHudYRatio());
-                moduleData.addProperty("hud_scale", rectHudModule.getHudScale());
-            } else if (module instanceof ArmorHud armorHud) {
-                moduleData.addProperty("hud_x", armorHud.getHudX());
-                moduleData.addProperty("hud_y", armorHud.getHudY());
-                moduleData.addProperty("hud_x_ratio", armorHud.getHudXRatio());
-                moduleData.addProperty("hud_y_ratio", armorHud.getHudYRatio());
-                moduleData.addProperty("hud_scale", armorHud.getHudScale());
-            }
-
-            JsonObject settings = new JsonObject();
-            for (Setting setting : module.settings()) {
-                try {
-                    serializeSetting(setting, settings);
-                } catch (Throwable t) {
-
-                    System.err.println("[Phaze] failed to serialize setting " + setting.getRawName() + " of " + module.getName() + ": " + t);
-                }
-            }
-            moduleData.add("settings", settings);
-
-            modules.add(module.getName(), moduleData);
+    /**
+     * Persists the current in-memory state to {@code configFile}.
+     *
+     * <p>Writes are atomic-with-backup: we never overwrite the target
+     * file in place because a crash / Alt+F4 / kill mid-{@code write}
+     * would leave a half-written JSON that {@link Gson} chokes on at
+     * the next startup, which used to silently reset every setting.
+     * Sequence:
+     * <ol>
+     *   <li>Serialize the whole config tree to a fresh {@code .tmp}
+     *       sibling.</li>
+     *   <li>Copy the existing target into {@code .bak} (so a
+     *       corrupted next-write or accidental delete still has a
+     *       previous-good fallback that {@link #loadConfigInternal}
+     *       can recover from).</li>
+     *   <li>Atomic-move the temp on top of the target. If the move
+     *       isn't atomic on the host filesystem (rare on NTFS, but
+     *       e.g. on FAT32) we fall back to a non-atomic replace -
+     *       still safer than the original write-in-place.</li>
+     * </ol>
+     */
+    public synchronized void save(File configFile) {
+        if (!isLoadingConfig && !shutdownSaved) {
+            saveSnapshot(configFile);
         }
+    }
 
-        config.add("modules", modules);
-        vorga.phazeclient.implement.features.modules.client.Theme theme = vorga.phazeclient.implement.features.modules.client.Theme.getInstance();
-        config.addProperty("theme", theme.menuTheme.getSelected());
-        config.addProperty("blurRadius", theme.blurRadius.getValue());
-        config.addProperty("menuPanoramaSpeed", MenuUiSettings.getInstance().getPanoramaSpeed());
-        config.addProperty("menuGuiFpsLimit", MenuUiSettings.getInstance().getGuiFpsLimit());
-        config.addProperty("menuGuiScale", MenuUiSettings.getInstance().getGuiScale());
-        config.addProperty("menuPanoramaPreset", MenuUiSettings.getInstance().getSelectedPanoramaPresetId());
-        config.addProperty("customMainMenuEnabled", MenuUiSettings.getInstance().isCustomMainMenuEnabled());
-        config.addProperty("menuPanoramaSpeedScaleVersion", MenuUiSettings.PANORAMA_SPEED_SCALE_VERSION);
+    private boolean saveSnapshot(File configFile) {
+        return writeConfigJson(configFile, buildCurrentConfigJson(), true);
+    }
 
-        if (configFile.exists()) {
-            try (Reader rdr = new FileReader(configFile)) {
-                JsonObject existing = GSON.fromJson(rdr, JsonObject.class);
-                if (existing != null && existing.has("imported")
-                        && existing.get("imported").getAsBoolean()) {
-                    config.addProperty("imported", true);
-                }
-            } catch (Throwable ignored) {
-
-            }
-        }
-
+    /** All callers hold this manager's monitor, including import/name writes. */
+    private boolean writeConfigJson(File configFile, JsonObject config, boolean preserveImported) {
         Path target = configFile.toPath();
         Path tmp = target.resolveSibling(configFile.getName() + ".tmp");
         Path bak = target.resolveSibling(configFile.getName() + ".bak");
+        JsonObject existing = readConfigFile(configFile);
+
+        // The imported flag belongs to the destination file, not the
+        // portable snapshot: saving a local copy must not inherit it.
+        if (preserveImported) {
+            try {
+                JsonObject markerSource = existing != null ? existing : readConfigFile(bak.toFile());
+                if (markerSource != null && markerSource.has("imported")
+                        && markerSource.get("imported").getAsBoolean()) {
+                    config.addProperty("imported", true);
+                }
+            } catch (Throwable ignored) {
+                // An invalid marker must not prevent saving settings.
+            }
+        }
 
         try {
-
-            try (FileWriter writer = new FileWriter(tmp.toFile())) {
+            // 1. write to temp
+            // Gson emits many tiny writes; unbuffered, each one is a syscall the AV scanner inspects.
+            try (Writer writer = new BufferedWriter(new FileWriter(tmp.toFile()), 64 * 1024)) {
                 GSON.toJson(config, writer);
             }
-
-            if (Files.exists(target)) {
+            // 2. retain previous-good in .bak (best-effort). Copy, rather
+            // than move, so the primary remains present until publication.
+            if (existing != null) {
                 try {
-                    Files.move(target, bak, StandardCopyOption.REPLACE_EXISTING);
+                    Files.copy(target, bak, StandardCopyOption.REPLACE_EXISTING);
                 } catch (IOException ignored) {
-
+                    // .bak rotation failing is not fatal - the atomic
+                    // move below still gives us a consistent target.
                 }
             }
-
+            // 3. atomic publish
             try {
                 Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (IOException atomicFailed) {
-
+                // Fallback for filesystems that don't support atomic
+                // move (FAT32, some network mounts). Still safer than
+                // overwriting the original in place.
                 Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
             }
+            invalidateConfigList();
+            return true;
         } catch (IOException e) {
             e.printStackTrace();
-
+            // Clean up the temp so a retry doesn't trip over stale data.
             try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+            return false;
         }
     }
 
@@ -226,7 +252,24 @@ public final class ConfigManager {
         save(getConfigFile(configName));
     }
 
-    public String exportCurrentToString() {
+    /**
+     * Serialize the current in-memory configuration into a portable
+     * shareable string. The format is:
+     *
+     *   PHAZE1:<base64(gzip(JSON))>
+     *
+     * <p>The {@code PHAZE1:} prefix is a magic marker so a clipboard
+     * paste with foreign text can be rejected fast in {@link
+     * #importFromString}; gzip+base64 keeps the payload short enough
+     * to fit in a Discord message (typical config compresses 5-10x).
+     * The JSON body is the same shape as what {@link #save} writes to
+     * disk, so anything saveable on disk is also shareable.
+     *
+     * <p>Returns {@code null} if the serialization fails - the caller
+     * should fall back to displaying an error rather than feeding a
+     * garbage string to the clipboard.
+     */
+    public synchronized String exportCurrentToString() {
         try {
             JsonObject config = buildCurrentConfigJson();
             String json = GSON.toJson(config);
@@ -242,16 +285,42 @@ public final class ConfigManager {
         }
     }
 
+    /**
+     * Decode a {@code PHAZE1:...} share-string and apply it as the
+     * current config (after persisting the result to a fresh
+     * {@code imported_<n>} entry so the user doesn't overwrite their
+     * existing setup by accident).
+     *
+     * <p>Returns the name of the new config on success, or {@code null}
+     * if the input wasn't a valid share-string. The active config is
+     * then switched to the imported one.
+     */
     public String importFromString(String shareString) {
         return importFromString(shareString, null);
     }
 
-    public String importFromString(String shareString, String preferredName) {
+    /**
+     * Same as {@link #importFromString(String)} but tries to save the
+     * imported config under {@code preferredName} when supplied (and
+     * not already taken by an existing file). Falls back to the
+     * sequential {@code imported_<n>} slot otherwise. The server-
+     * side share endpoint carries the original uploader's local
+     * config name and the modal forwards it through, so the imported
+     * copy lands under the same label as on the uploader's machine.
+     */
+    public synchronized String importFromString(String shareString, String preferredName) {
+        if (isLoadingConfig || shutdownSaved) return null;
         if (shareString == null) return null;
-
+        // Force a clean save of the currently-active config first so
+        // there's no in-flight autosave racing the import write. The
+        // earlier flow let an autosave tick fire BETWEEN the import
+        // file-write and loadConfig(name), which could clobber the
+        // freshly-imported file with the old in-memory state - the
+        // user reported this as "configs swap places after loading
+        // from the server".
         flushNow();
         String trimmed = shareString.trim();
-
+        // Tolerate CRLF / surrounding quotes from clipboard pastes.
         if (trimmed.startsWith("\"") && trimmed.endsWith("\"") && trimmed.length() > 1) {
             trimmed = trimmed.substring(1, trimmed.length() - 1);
         }
@@ -270,22 +339,46 @@ public final class ConfigManager {
             if (parsed == null) {
                 return null;
             }
-
+            // Persist as a brand-new config so we don't overwrite
+            // anything the user already had on disk. Pick a slot that
+            // doesn't already exist on disk - prefer the name the
+            // uploader sent (when supplied + safe + free), otherwise
+            // fall back to the sequential "imported_<n>" naming.
             String name = pickImportName(preferredName);
             File target = getConfigFile(name);
-
+            // Tag the file as imported-from-server so the configs UI
+            // can render a different left-side icon for these. We
+            // write the marker BEFORE persisting so the file on disk
+            // carries it alongside the parsed data; saveSnapshot
+            // preserves this destination-local marker on later saves.
             parsed.addProperty("imported", true);
-            try (FileWriter writer = new FileWriter(target)) {
-                GSON.toJson(parsed, writer);
-            }
+            if (!writeConfigJson(target, parsed, false)) return null;
 
+            // Switch the active-config pointer to the imported file
+            // BEFORE applying the JSON. The user explicitly asked
+            // for this order ("сначала сменить на импортированный а
+            // потом загрузка настроек") because the previous flow
+            // (loadConfig handles outgoing-save → reset → apply)
+            // had a window where the in-memory state was the imported
+            // settings but currentConfig still pointed at the old
+            // file - any autosave / direct save in that window would
+            // overwrite the OLD config with the imported settings.
+            //
+            // Setting the pointer first means even if a stray save
+            // fires mid-apply, it goes to the imported config's own
+            // file, which is the intended target anyway.
             isLoadingConfig = true;
             try {
                 currentConfig = target;
                 setCurrentConfigName(name);
 
+                // Reset everything to in-code defaults so settings
+                // missing from the imported file don't keep stale
+                // values from the previous active config.
                 applyInCodeDefaults();
 
+                // Apply the imported JSON we already have parsed -
+                // skip a redundant disk read.
                 applyConfigJson(parsed);
             } finally {
                 dirtyAt = 0L;
@@ -298,6 +391,15 @@ public final class ConfigManager {
         }
     }
 
+    /**
+     * Picks a free file name for an imported config. Tries the
+     * uploader-supplied {@code preferredName} first when it (a)
+     * passes a sanity regex (no path-separator junk) and (b) isn't
+     * already taken on disk. Falls back to {@link #nextImportedName}
+     * (sequential {@code imported_<n>} slots) otherwise so the
+     * import never silently overwrites a config the user already
+     * has of the same label.
+     */
     private String pickImportName(String preferredName) {
         if (preferredName != null) {
             String sanitised = preferredName.trim();
@@ -306,7 +408,9 @@ public final class ConfigManager {
                     && !getConfigFile(sanitised).exists()) {
                 return sanitised;
             }
-
+            // Name was sent but already taken on this machine - try
+            // appending a numeric suffix so the upload tag stays
+            // visible in the file name (e.g. "pvp" -> "pvp_2").
             if (sanitised.matches("[A-Za-z0-9_\\-]{1,30}")) {
                 for (int i = 2; i < 1000; i++) {
                     String candidate = sanitised + "_" + i;
@@ -319,6 +423,12 @@ public final class ConfigManager {
         return nextImportedName();
     }
 
+    /**
+     * Pick the next free {@code imported_<n>} slot. The simple
+     * sequential search is fine because a user is unlikely to ever
+     * cross the double-digit imports threshold and the directory
+     * scan is one stat per attempted name.
+     */
     private String nextImportedName() {
         for (int i = 1; i < 1000; i++) {
             String candidate = i == 1 ? "imported" : "imported_" + i;
@@ -329,30 +439,54 @@ public final class ConfigManager {
         return "imported_" + System.currentTimeMillis();
     }
 
+    /**
+     * Build the same JSON tree {@link #save} writes, but return it
+     * directly instead of serializing to disk. Shared by the regular
+     * save path and the export-to-string path so the two never drift
+     * apart.
+     */
     private JsonObject buildCurrentConfigJson() {
         JsonObject config = new JsonObject();
         JsonObject modules = new JsonObject();
 
-        for (Module module : Main.getInstance().getModuleProvider().getModules()) {
+        for (Module module : moduleSupplier.get()) {
             JsonObject moduleData = new JsonObject();
             moduleData.addProperty("enabled", module.isState());
             moduleData.addProperty("key", module.getKey());
 
             if (module instanceof RectHudModule rectHudModule) {
+                moduleData.addProperty("hud_x_ratio", rectHudModule.getHudXRatio());
+                moduleData.addProperty("hud_y_ratio", rectHudModule.getHudYRatio());
                 moduleData.addProperty("hud_x", rectHudModule.getHudX());
                 moduleData.addProperty("hud_y", rectHudModule.getHudY());
+                moduleData.addProperty("hud_ref_w", rectHudModule.getHudRefWidth());
+                moduleData.addProperty("hud_ref_h", rectHudModule.getHudRefHeight());
                 moduleData.addProperty("hud_scale", rectHudModule.getHudScale());
+                moduleData.addProperty("hud_layout_w", rectHudModule.getHudLayoutWidth());
+                moduleData.addProperty("hud_layout_h", rectHudModule.getHudLayoutHeight());
+                if (rectHudModule instanceof BossBarHud bossBar) {
+                    moduleData.addProperty("hud_auto_position", bossBar.isHudPositionAutomatic());
+                }
             } else if (module instanceof ArmorHud armorHud) {
+                moduleData.addProperty("hud_x_ratio", armorHud.getHudXRatio());
+                moduleData.addProperty("hud_y_ratio", armorHud.getHudYRatio());
                 moduleData.addProperty("hud_x", armorHud.getHudX());
                 moduleData.addProperty("hud_y", armorHud.getHudY());
+                moduleData.addProperty("hud_ref_w", armorHud.getHudRefWidth());
+                moduleData.addProperty("hud_ref_h", armorHud.getHudRefHeight());
                 moduleData.addProperty("hud_scale", armorHud.getHudScale());
+                moduleData.addProperty("hud_layout_w", armorHud.getHudLayoutWidth());
+                moduleData.addProperty("hud_layout_h", armorHud.getHudLayoutHeight());
             }
 
             JsonObject settings = new JsonObject();
             for (Setting setting : module.settings()) {
                 try {
                     serializeSetting(setting, settings);
-                } catch (Throwable ignored) {}
+                } catch (Throwable t) {
+                    System.err.println("[Phaze] failed to serialize setting " + setting.getRawName()
+                            + " of " + module.getName() + ": " + t);
+                }
             }
             moduleData.add("settings", settings);
             modules.add(module.getName(), moduleData);
@@ -368,32 +502,98 @@ public final class ConfigManager {
         config.addProperty("menuPanoramaPreset", MenuUiSettings.getInstance().getSelectedPanoramaPresetId());
         config.addProperty("customMainMenuEnabled", MenuUiSettings.getInstance().isCustomMainMenuEnabled());
         config.addProperty("menuPanoramaSpeedScaleVersion", MenuUiSettings.PANORAMA_SPEED_SCALE_VERSION);
+        // Screen this whole config was written against. Individual HUDs
+        // carry their own reference, but this covers the ones that were
+        // never touched in this session and therefore never got one.
+        writeScreenReference(config);
         return config;
     }
 
-    public void saveCurrentConfig() {
-
-        if (isLoadingConfig) {
+    /**
+     * Persists the in-memory state to whatever config is currently active.
+     *
+     * <p>Each named config (including {@code default}) is treated as a
+     * regular file: auto-save writes straight into the active file and
+     * never silently swaps the active config behind the user's back.
+     * The previous "default redirects to autosave" trick caused two
+     * separate bugs:
+     * <ul>
+     *   <li>Settings appeared to merge between configs because changes
+     *       made on {@code default} kept being written to {@code autosave}
+     *       and bled into whatever happened to load that file next.</li>
+     *   <li>Switching to {@code default} silently flipped the active
+     *       config back to {@code autosave} on the very next setting
+     *       change.</li>
+     * </ul>
+     * If the user wants a true factory reset, they can delete their
+     * {@code default.Phaze} file - the in-code defaults take over.
+     */
+    public synchronized void saveCurrentConfig() {
+        // Honour the load-time guard like flushNow / flushIfDirty
+        // do. Without this, any onChange callback that fires during
+        // applyInCodeDefaults() (e.g. AutoSwap.swapType reset) and
+        // calls saveCurrentConfig() directly would write the
+        // partially-reset in-memory state straight back into the
+        // OUTGOING file's path - that's the exact "configs swap
+        // places after import / settings vanish after switch" bug
+        // the user reported.
+        if (isLoadingConfig || shutdownSaved) {
             return;
         }
+        saveCurrentConfigInternal();
+    }
+
+    private boolean saveCurrentConfigInternal() {
         if (currentConfig != null) {
-            save(currentConfig);
-            saveCurrentConfigName();
+            if (saveSnapshot(currentConfig) && saveCurrentConfigName()) {
+                dirtyAt = 0L;
+                return true;
+            }
+            // A failed write must remain retryable, not silently consume
+            // the change that caused it. Space retries by the debounce.
+            dirtyAt = System.currentTimeMillis();
+        }
+        return false;
+    }
+
+    /** Shared final-save barrier for CLIENT_STOPPING and the JVM safety net. */
+    public synchronized void saveOnShutdown() {
+        if (shutdownSaved || isLoadingConfig) return;
+        if (saveCurrentConfigInternal()) {
+            shutdownSaved = true;
+            autoSaveEnabled = false;
         }
     }
 
-    public void enableAutoSave() {
-        autoSaveEnabled = true;
+    /**
+     * Enables the auto-save pipeline. Should be called AFTER the initial
+     * config load completes so the load-time {@code setValue} calls don't
+     * trigger their own redundant writes.
+     */
+    public synchronized void enableAutoSave() {
+        if (!shutdownSaved) autoSaveEnabled = true;
     }
 
-    public void markDirty() {
+    /**
+     * Marks the in-memory config as dirty so the next {@link #flushIfDirty}
+     * tick writes it to disk. Shares the save monitor so a notification
+     * cannot be cleared by an in-flight snapshot; safe to call from any
+     * setting's notifyChange path.
+     */
+    public synchronized void markDirty() {
         if (autoSaveEnabled && !isLoadingConfig) {
             dirtyAt = System.currentTimeMillis();
         }
     }
 
-    public void flushIfDirty() {
-        if (isLoadingConfig) {
+    /**
+     * Persists the current config to disk if {@link #markDirty} was called
+     * at least {@link #AUTOSAVE_DEBOUNCE_MS} ago. Called once per client tick
+     * from {@link vorga.phazeclient.core.Main}; the debounce keeps slider
+     * drags / bind re-presses from spamming disk.
+     */
+    public synchronized void flushIfDirty() {
+        if (!autoSaveEnabled || isLoadingConfig || shutdownSaved) {
             return;
         }
         long ts = dirtyAt;
@@ -403,40 +603,72 @@ public final class ConfigManager {
         if (System.currentTimeMillis() - ts < AUTOSAVE_DEBOUNCE_MS) {
             return;
         }
-        dirtyAt = 0L;
         saveCurrentConfig();
     }
 
-    public void flushNow() {
-        if (!autoSaveEnabled || isLoadingConfig) {
+    /**
+     * Immediate save bypass for events that the user expects to persist
+     * even if the game crashes within the debounce window. Module
+     * enable/disable toggles and bind reassignments are the canonical
+     * cases: a user who toggles a module then Alt+F4s a frame later
+     * (e.g. because the module's just-enabled effect made the game
+     * unresponsive) would otherwise lose the toggle. Slider drags are
+     * still debounced via {@link #markDirty} - they fire dozens of
+     * notifications per second and immediate-saving each one would
+     * write the config dozens of times per drag.
+     */
+    public synchronized void flushNow() {
+        if (!autoSaveEnabled || isLoadingConfig || shutdownSaved) {
             return;
         }
-        dirtyAt = 0L;
         saveCurrentConfig();
     }
 
-    public void loadConfig(String configName) {
-
+    public synchronized void loadConfig(String configName) {
+        if (isLoadingConfig || shutdownSaved) return;
+        // Block the auto-save pipeline for the entire load duration -
+        // including the save-of-outgoing-config + applyInCodeDefaults
+        // pass that runs at the top of loadConfigInternal. Without
+        // this gate the in-load module.switchState() calls would
+        // route through the global Module change listener and call
+        // flushNow(), which writes the freshly-blanked in-memory
+        // state straight back into the OUTGOING file's path - that
+        // is the exact "all my settings vanished after one switch"
+        // bug users were hitting.
         isLoadingConfig = true;
         try {
             loadConfigInternal(configName);
         } finally {
-
+            // Settings updated during the load fire notifyChange() ->
+            // markDirty(), which would otherwise cause the very next
+            // flushIfDirty tick to write the freshly-loaded state back
+            // to disk. Clearing the dirty timestamp here scopes auto-
+            // save to genuine post-load user actions only.
             dirtyAt = 0L;
             isLoadingConfig = false;
         }
     }
 
     private void loadConfigInternal(String configName) {
-
+        // Save current config before loading new one, only when switching
+        // to a different config. Skipped when target == current so the
+        // initial load on startup doesn't write the in-code defaults
+        // straight back over a user's freshly-loaded file.
         if (currentConfig != null && currentConfig.exists() && !currentConfigName.equals(configName)) {
-            save(currentConfig);
+            saveSnapshot(currentConfig);
         }
 
         File configFile = getConfigFile(configName);
 
+        // Reset every module / hud / theme to its in-code default BEFORE
+        // applying the new file. Without this, modules that the new file
+        // doesn't mention would keep whatever state the previous config
+        // left them in - which manifested as "configs merge" when
+        // switching between profiles. This mirrors soup's onUnload step.
         applyInCodeDefaults();
 
+        // Try the primary file first; on a corrupt-or-missing read,
+        // fall back to the .bak rotation save() leaves behind.
         JsonObject config = readConfigFile(configFile);
         File backupFile = new File(configFile.getParentFile(), configFile.getName() + ".bak");
         if (config == null && backupFile.exists()) {
@@ -445,24 +677,50 @@ public final class ConfigManager {
             config = readConfigFile(backupFile);
         }
 
+        // Update the active-config pointer regardless of whether the
+        // file existed - if the user is switching to a config name
+        // that has no .Phaze yet (e.g. a fresh "default" on first
+        // launch), we still want subsequent saves to land on that name
+        // instead of writing into the previous active config.
         currentConfig = configFile;
         setCurrentConfigName(configName);
 
         if (config == null) {
-            return;
+            return; // nothing to apply; in-code defaults stay in place
         }
 
         applyConfigJson(config);
     }
 
+    /**
+     * Applies a parsed config JSON tree to the live in-memory state.
+     * Pulled out of {@link #loadConfigInternal} so the import path
+     * can re-use it without going through the disk-read + outgoing-
+     * save preamble. Per-module errors are isolated so one broken
+     * entry can't strand the rest of the iteration.
+     */
     private void applyConfigJson(JsonObject config) {
         try {
+            pendingScreenRefWidth = config.has("screen_w") ? config.get("screen_w").getAsInt() : -1;
+            pendingScreenRefHeight = config.has("screen_h") ? config.get("screen_h").getAsInt() : -1;
+            // A config from before screen references existed cannot say
+            // which window its HUD pixels belong to, so this one launch
+            // has to take them at face value. Mark it dirty so the
+            // reference is written straight away and every later launch
+            // can rescale properly - without this the user would have to
+            // happen to change a setting before the fix takes effect.
+            boolean needsScreenReference = pendingScreenRefWidth <= 0 || pendingScreenRefHeight <= 0;
+
             if (config.has("modules")) {
                 JsonObject modules = config.getAsJsonObject("modules");
-                for (Module module : Main.getInstance().getModuleProvider().getModules()) {
+                for (Module module : moduleSupplier.get()) {
                     try {
                         loadModule(module, modules);
-                    } catch (Throwable t) {
+
+            if (needsScreenReference) {
+                markDirty();
+            }
+        } catch (Throwable t) {
                         System.err.println("[Phaze] failed to load module '"
                                 + module.getName() + "' from config: " + t);
                     }
@@ -499,9 +757,7 @@ public final class ConfigManager {
 
             float guiScale = MenuUiSettings.DEFAULT_GUI_SCALE;
             if (config.has("menuGuiScale")) {
-                try {
-                    guiScale = config.get("menuGuiScale").getAsFloat();
-                } catch (Throwable ignored) {}
+                try { guiScale = config.get("menuGuiScale").getAsFloat(); } catch (Throwable ignored) {}
             }
 
             String panoramaPreset = MenuUiSettings.DEFAULT_PANORAMA_PRESET_ID;
@@ -539,10 +795,15 @@ public final class ConfigManager {
 
     private void loadConfigInternalLegacyApply(JsonObject config) {
         try {
+            pendingScreenRefWidth = config.has("screen_w") ? config.get("screen_w").getAsInt() : -1;
+            pendingScreenRefHeight = config.has("screen_h") ? config.get("screen_h").getAsInt() : -1;
+
             if (config.has("modules")) {
                 JsonObject modules = config.getAsJsonObject("modules");
-                for (Module module : Main.getInstance().getModuleProvider().getModules()) {
-
+                for (Module module : moduleSupplier.get()) {
+                    // Wrap every module's load in its own try so a
+                    // single broken module entry can't strand all the
+                    // ones that come after it in the iteration order.
                     try {
                         loadModule(module, modules);
                     } catch (Throwable t) {
@@ -566,19 +827,43 @@ public final class ConfigManager {
                 } catch (Throwable ignored) {}
             }
         } catch (Throwable t) {
-
+            // Defensive: anything that escapes the per-module try (e.g.
+            // a structural cast on the top-level "modules" object) is
+            // logged but not rethrown.
             t.printStackTrace();
         }
     }
 
+    /**
+     * Resets every module / HUD / theme back to its in-code default.
+     * Called as the first step of {@link #loadConfigInternal} so the
+     * about-to-be-applied JSON only adds back the deltas the saved
+     * config explicitly captured - everything not mentioned in the
+     * file ends up at its in-code default rather than carrying over
+     * from the previously-active config.
+     *
+     * <p>Each setting carries its own {@link Setting#reset()} that
+     * routes through {@code setValue} so the on-change callbacks
+     * fire identically to a manual user reset. We deliberately delay
+     * this call until AFTER the in-memory state has been captured
+     * by the previous-config save in {@link #loadConfigInternal} -
+     * resetting first would discard whatever the user just changed
+     * before it had a chance to be persisted to the outgoing config.
+     */
     private void applyInCodeDefaults() {
-        for (Module module : Main.getInstance().getModuleProvider().getModules()) {
-
-            if (module.isState() != module.isDefaultStateOn()) {
-                module.switchState();
+        for (Module module : moduleSupplier.get()) {
+            // Restore the module's declared initial state before applying the
+            // target config. Explicit saved states are loaded afterwards.
+            if (module.isState() != module.isEnabledByDefault()) {
+                module.restoreState(module.isEnabledByDefault());
             }
             module.setKey(0);
-
+            // Use each setting's own reset() so the value snaps back
+            // to the value declared at construction time (captured
+            // automatically by the per-type setValue/setColor/etc on
+            // first call). This routes through notifyChange so any
+            // dependent callbacks fire identically to a user-clicked
+            // reset.
             resetSettingsRecursive(module.settings());
             if (module instanceof RectHudModule rectHudModule) {
                 rectHudModule.resetHudTransform();
@@ -586,12 +871,20 @@ public final class ConfigManager {
                 armorHud.resetHudTransform();
             }
         }
-
+        // Theme + blur back to boot defaults.
         vorga.phazeclient.implement.features.modules.client.Theme.getInstance().menuTheme.setSelected("Lunar Blue");
         vorga.phazeclient.implement.features.modules.client.Theme.getInstance().blurRadius.setValue(5.0F);
         MenuUiSettings.getInstance().resetToDefaults();
     }
 
+    /**
+     * Walks a setting list and calls {@link Setting#reset()} on each
+     * entry. Recurses into {@link GroupSetting#getSubSettings()} so
+     * nested groups (e.g. theme palette colour pickers inside a
+     * group toggle) reset alongside their parent. Per-setting
+     * exceptions are swallowed because a single bad setting must
+     * not strand the rest of the module.
+     */
     private void resetSettingsRecursive(List<? extends Setting> settings) {
         if (settings == null) return;
         for (Setting setting : settings) {
@@ -601,10 +894,49 @@ public final class ConfigManager {
                     resetSettingsRecursive(group.getSubSettings());
                 }
             } catch (Throwable ignored) {
-
+                // Skip a single bad setting reset without taking the
+                // rest of the module reset down with it.
             }
         }
     }
+
+    /**
+     * Reads and parses a single config file into a {@link JsonObject},
+     * or returns {@code null} if the file is missing, empty, or
+     * unparseable. Used by {@link #loadConfigInternal} so the caller
+     * can transparently retry against the {@code .bak} sibling.
+     */
+
+    /**
+     * Records the scaled screen size the config was written on.
+     *
+     * <p>HUD coordinates are stored in pixels, which only mean anything
+     * relative to a particular screen. Without this, a layout arranged
+     * in a half-size window is restored verbatim into a fullscreen one
+     * and every element lands in the upper-left quadrant.
+     */
+    private static void writeScreenReference(JsonObject config) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || client.getWindow() == null) {
+            return;
+        }
+        int width = client.getWindow().getScaledWidth();
+        int height = client.getWindow().getScaledHeight();
+        if (width > 0 && height > 0) {
+            config.addProperty("screen_w", width);
+            config.addProperty("screen_h", height);
+        }
+    }
+
+    /**
+     * Screen reference for the config currently being applied, or -1
+     * when it has none. Per-module references win over this; it exists
+     * so a config saved before per-module references were added still
+     * rescales correctly instead of needing one throwaway session to
+     * pick them up.
+     */
+    private int pendingScreenRefWidth = -1;
+    private int pendingScreenRefHeight = -1;
 
     private JsonObject readConfigFile(File file) {
         if (file == null || !file.exists()) {
@@ -612,26 +944,38 @@ public final class ConfigManager {
         }
         try (Reader reader = new FileReader(file)) {
             JsonObject parsed = GSON.fromJson(reader, JsonObject.class);
-            return parsed;
+            return parsed; // may be null if file was empty - caller treats that as no-op
         } catch (JsonSyntaxException | IOException e) {
-
+            // Half-written / truncated / hand-corrupted file. Let the
+            // caller fall back to .bak. We log so the operator can see
+            // why their configs aren't applying.
             System.err.println("[Phaze] could not parse config file '"
                     + file.getAbsolutePath() + "': " + e);
             return null;
         }
     }
 
+    /**
+     * Applies a single module's data block out of the {@code modules}
+     * top-level object. Extracted from the inline body of
+     * {@link #loadConfigInternal} so each module's load can be wrapped
+     * in its own try/catch up there - without that isolation, a single
+     * malformed module entry would short-circuit the iteration and
+     * leave every later module on its in-code defaults.
+     */
     private void loadModule(Module module, JsonObject modules) {
         boolean hasModuleData = modules.has(module.getName())
                 && modules.get(module.getName()).isJsonObject();
         JsonObject moduleData = hasModuleData ? modules.getAsJsonObject(module.getName()) : null;
+        if (hasModuleData && module instanceof BossBarHud) {
+            moduleData = BossBarHud.migrateLegacyData(moduleData);
+        }
 
         if (module.isShowEnable()) {
-
             boolean enabled = hasModuleData && moduleData.has("enabled")
                     ? moduleData.get("enabled").getAsBoolean()
-                    : module.isDefaultStateOn();
-            module.setState(enabled);
+                    : module.isEnabledByDefault();
+            module.restoreState(enabled);
         }
 
         if (hasModuleData && moduleData.has("key")) {
@@ -640,11 +984,15 @@ public final class ConfigManager {
 
         if (hasModuleData && moduleData.has("settings") && moduleData.get("settings").isJsonObject()) {
             JsonObject settings = moduleData.getAsJsonObject("settings");
+            if (module instanceof vorga.phazeclient.implement.features.modules.other.LowHealthWarning) {
+                settings = vorga.phazeclient.implement.features.modules.other.LowHealthWarning.migrateLegacySettings(settings);
+            }
             for (Setting setting : module.settings()) {
                 try {
                     deserializeSetting(setting, settings);
                 } catch (Exception ignored) {
-
+                    // Skip a single bad setting without taking the rest
+                    // of the module down with it.
                 }
             }
         }
@@ -653,37 +1001,80 @@ public final class ConfigManager {
             if (!hasModuleData) {
                 rectHudModule.resetHudTransform();
             } else {
-                if (moduleData.has("hud_x")) {
-                    rectHudModule.setHudX(moduleData.get("hud_x").getAsFloat());
-                } else if (moduleData.has("hud_x_ratio")) {
-                    rectHudModule.setHudXRatio(moduleData.get("hud_x_ratio").getAsFloat());
+                // New snapshots carry pixels, reference and widget extent together.
+                // The first position read resolves the saved available-space fraction.
+                // Retain whole-screen ratios and bare pixels as legacy fallbacks.
+                rectHudModule.setHudLayoutSize(0, 0);
+                if (moduleData.has("hud_layout_w") && moduleData.has("hud_layout_h")
+                        && moduleData.has("hud_x") && moduleData.has("hud_y")
+                        && moduleData.has("hud_ref_w") && moduleData.has("hud_ref_h")) {
+                    rectHudModule.setHudPosition(moduleData.get("hud_x").getAsFloat(), moduleData.get("hud_y").getAsFloat(),
+                            moduleData.get("hud_ref_w").getAsInt(), moduleData.get("hud_ref_h").getAsInt());
+                    rectHudModule.setHudLayoutSize(moduleData.get("hud_layout_w").getAsFloat(), moduleData.get("hud_layout_h").getAsFloat());
+                } else if (moduleData.has("hud_x_ratio") && moduleData.has("hud_y_ratio")) {
+                    rectHudModule.setHudPositionRatio(
+                            moduleData.get("hud_x_ratio").getAsFloat(),
+                            moduleData.get("hud_y_ratio").getAsFloat());
+                } else if (moduleData.has("hud_x") && moduleData.has("hud_y")
+                        && moduleData.has("hud_ref_w") && moduleData.has("hud_ref_h")) {
+                    rectHudModule.setHudPosition(
+                            moduleData.get("hud_x").getAsFloat(),
+                            moduleData.get("hud_y").getAsFloat(),
+                            moduleData.get("hud_ref_w").getAsInt(),
+                            moduleData.get("hud_ref_h").getAsInt());
+                                } else if (moduleData.has("hud_x") && moduleData.has("hud_y")) {
+                    // No per-module reference: fall back to the one the
+                    // whole config carries. Older configs have neither,
+                    // and then the pixels are taken at face value.
+                    rectHudModule.setHudPosition(
+                            moduleData.get("hud_x").getAsFloat(),
+                            moduleData.get("hud_y").getAsFloat(),
+                            pendingScreenRefWidth, pendingScreenRefHeight);
                 } else {
                     rectHudModule.resetHudTransform();
                 }
-                if (moduleData.has("hud_y")) {
-                    rectHudModule.setHudY(moduleData.get("hud_y").getAsFloat());
-                } else if (moduleData.has("hud_y_ratio")) {
-                    rectHudModule.setHudYRatio(moduleData.get("hud_y_ratio").getAsFloat());
-                }
                 if (moduleData.has("hud_scale")) {
                     rectHudModule.setHudScale(moduleData.get("hud_scale").getAsFloat());
+                }
+                if (rectHudModule instanceof BossBarHud bossBar && moduleData.has("hud_auto_position")
+                        && moduleData.get("hud_auto_position").getAsBoolean()) {
+                    bossBar.resetAutomaticPosition();
                 }
             }
         } else if (module instanceof ArmorHud armorHud) {
             if (!hasModuleData) {
                 armorHud.resetHudTransform();
             } else {
-                if (moduleData.has("hud_x")) {
-                    armorHud.setHudX(moduleData.get("hud_x").getAsFloat());
-                } else if (moduleData.has("hud_x_ratio")) {
-                    armorHud.setHudXRatio(moduleData.get("hud_x_ratio").getAsFloat());
+                // Armor renders in screen pixels, not Minecraft's scaled GUI space.
+                // Restore its reference and extent atomically, as for rectangular HUDs.
+                armorHud.setHudLayoutSize(0, 0);
+                if (moduleData.has("hud_layout_w") && moduleData.has("hud_layout_h")
+                        && moduleData.has("hud_x") && moduleData.has("hud_y")
+                        && moduleData.has("hud_ref_w") && moduleData.has("hud_ref_h")) {
+                    armorHud.setHudPosition(moduleData.get("hud_x").getAsFloat(), moduleData.get("hud_y").getAsFloat(),
+                            moduleData.get("hud_ref_w").getAsInt(), moduleData.get("hud_ref_h").getAsInt());
+                    armorHud.setHudLayoutSize(moduleData.get("hud_layout_w").getAsFloat(), moduleData.get("hud_layout_h").getAsFloat());
+                } else if (moduleData.has("hud_x_ratio") && moduleData.has("hud_y_ratio")) {
+                    armorHud.setHudPositionRatio(
+                            moduleData.get("hud_x_ratio").getAsFloat(),
+                            moduleData.get("hud_y_ratio").getAsFloat());
+                } else if (moduleData.has("hud_x") && moduleData.has("hud_y")
+                        && moduleData.has("hud_ref_w") && moduleData.has("hud_ref_h")) {
+                    armorHud.setHudPosition(
+                            moduleData.get("hud_x").getAsFloat(),
+                            moduleData.get("hud_y").getAsFloat(),
+                            moduleData.get("hud_ref_w").getAsInt(),
+                            moduleData.get("hud_ref_h").getAsInt());
+                                } else if (moduleData.has("hud_x") && moduleData.has("hud_y")) {
+                    // No per-module reference: fall back to the one the
+                    // whole config carries. Older configs have neither,
+                    // and then the pixels are taken at face value.
+                    armorHud.setHudPosition(
+                            moduleData.get("hud_x").getAsFloat(),
+                            moduleData.get("hud_y").getAsFloat(),
+                            pendingScreenRefWidth, pendingScreenRefHeight);
                 } else {
                     armorHud.resetHudTransform();
-                }
-                if (moduleData.has("hud_y")) {
-                    armorHud.setHudY(moduleData.get("hud_y").getAsFloat());
-                } else if (moduleData.has("hud_y_ratio")) {
-                    armorHud.setHudYRatio(moduleData.get("hud_y_ratio").getAsFloat());
                 }
                 if (moduleData.has("hud_scale")) {
                     armorHud.setHudScale(moduleData.get("hud_scale").getAsFloat());
@@ -692,15 +1083,59 @@ public final class ConfigManager {
         }
     }
 
-    public void loadCurrentConfig() {
+    public synchronized void loadCurrentConfig() {
         loadConfig(currentConfigName);
     }
 
+    /**
+     * Returns the list of available config names, ordered so that the
+     * pinned configs come first:
+     * <ol>
+     *   <li>{@code default} - always present even if no
+     *       {@code default.Phaze} file has been written yet (it's a
+     *       virtual factory-reset target).</li>
+     *   <li>{@code autosave} - second when present, so the user's most
+     *       recent auto-saved state sits right under the reset target.</li>
+     *   <li>Everything else, case-insensitive alphabetical.</li>
+     * </ol>
+     */
     public String[] getConfigList() {
+        // Called several times per menu frame; listing the directory each time cost ~0.1 ms.
+        ConfigListSnapshot snapshot = configListSnapshot;
+        long now = System.nanoTime();
+        if (snapshot != null && now - snapshot.checkedNs() < CONFIG_LIST_RECHECK_NS) {
+            return snapshot.names().clone();
+        }
+        long generation = configListGeneration.get();
+        // Creating, deleting or renaming an entry updates the directory's own timestamp.
+        long stamp = configsDir.lastModified();
+        String[] names = snapshot != null && stamp != 0L && stamp == snapshot.directoryStamp()
+                ? snapshot.names()
+                : listConfigNames();
+        if (configListGeneration.get() == generation) {
+            configListSnapshot = new ConfigListSnapshot(names, stamp, now);
+        }
+        return names.clone();
+    }
+
+    private record ConfigListSnapshot(String[] names, long directoryStamp, long checkedNs) {}
+
+    private static final long CONFIG_LIST_RECHECK_NS = 250_000_000L;
+    private volatile ConfigListSnapshot configListSnapshot;
+    private final java.util.concurrent.atomic.AtomicLong configListGeneration = new java.util.concurrent.atomic.AtomicLong();
+
+    private void invalidateConfigList() {
+        configListGeneration.incrementAndGet();
+        configListSnapshot = null;
+    }
+
+    private String[] listConfigNames() {
         File[] files = configsDir.listFiles((dir, name) -> name.endsWith(".Phaze"));
 
         Set<String> uniqueNames = new LinkedHashSet<>();
-
+        // Always expose "default" - even on a fresh install where no
+        // default.Phaze exists yet - because the load path treats it as
+        // a virtual reset target rather than a real file.
         uniqueNames.add("default");
         if (files != null) {
             for (File file : files) {
@@ -713,6 +1148,7 @@ public final class ConfigManager {
         return configs;
     }
 
+    /** See {@link #getConfigList()} for ordering rules. */
     private static final Comparator<String> CONFIG_LIST_ORDER = (a, b) -> {
         int aRank = pinnedRank(a);
         int bRank = pinnedRank(b);
@@ -726,11 +1162,19 @@ public final class ConfigManager {
         return 2;
     }
 
-    public boolean configExists(String configName) {
+    public synchronized boolean configExists(String configName) {
         return getConfigFile(configName).exists();
     }
 
-    public boolean isImportedConfig(String configName) {
+    /**
+     * Whether the config on disk was imported from a server share-
+     * key. The configs view reads this to render a different
+     * left-side icon for imported configs (file_import.png) versus
+     * locally created ones (file.png). Cheap-ish per-frame call -
+     * we open + parse the file each time. If this becomes a
+     * hot-path concern we'll cache by config name + last-modified.
+     */
+    public synchronized boolean isImportedConfig(String configName) {
         File f = getConfigFile(configName);
         if (!f.exists()) return false;
         try (Reader r = new FileReader(f)) {
@@ -743,17 +1187,43 @@ public final class ConfigManager {
         }
     }
 
-    public void deleteConfig(String configName) {
+    /**
+     * Removes a config from disk and from the listing. If the user
+     * deletes the currently-active config, we transparently switch
+     * to {@code default} (or the first available config when the
+     * default has also been removed) and load it - this mirrors
+     * soup's deleteConfig flow and stops the GUI from showing a row
+     * that no longer exists on disk.
+     *
+     * <p>The literal name {@code "default"} is intentionally
+     * deletable: it's just a regular file. Deleting it just makes
+     * the next save recreate it from the in-code defaults.
+     */
+    public synchronized void deleteConfig(String configName) {
+        if (isLoadingConfig || shutdownSaved) return;
         if (configName == null || configName.isEmpty()) return;
 
         File configFile = getConfigFile(configName);
         File backupFile = new File(configFile.getParentFile(), configFile.getName() + ".bak");
         boolean wasActive = currentConfigName.equalsIgnoreCase(configName);
 
+        // If the deleted name is the active config, clear the
+        // currentConfig pointer FIRST so any concurrent flushNow /
+        // markDirty fired between this delete and the subsequent
+        // loadConfig(fallback) can't re-create the file by saving
+        // into the dangling path. The previous version held the
+        // pointer through the delete and the file would silently
+        // come back if a flush ticked at the wrong moment.
         if (wasActive) {
             currentConfig = null;
         }
 
+        // Use Files.deleteIfExists so a permission error / locked
+        // handle surfaces as a logged exception instead of
+        // silently failing - the previous {@code File.delete()}
+        // returned false on failure with no diagnostic, leaving
+        // the user with a "deletion didn't take" symptom and no
+        // clue why.
         try {
             Files.deleteIfExists(configFile.toPath());
         } catch (IOException e) {
@@ -766,10 +1236,16 @@ public final class ConfigManager {
             System.err.println("[Phaze] Failed to delete .bak '"
                     + backupFile.getAbsolutePath() + "': " + e.getMessage());
         }
+        invalidateConfigList();
 
+        // If we deleted what we were actively saving to, fall back to
+        // a real config so subsequent setting changes have a stable
+        // file to land in.
         if (wasActive) {
             String fallback = "default";
-
+            // If the user just deleted "default" too, pick whatever's
+            // first in the listing; if even that is empty, leave the
+            // active pointer on default so the next save creates it.
             if (!getConfigFile(fallback).exists()) {
                 String[] remaining = getConfigList();
                 for (String name : remaining) {
@@ -783,15 +1259,17 @@ public final class ConfigManager {
         }
     }
 
-    public void renameConfig(String oldName, String newName) {
+    public synchronized void renameConfig(String oldName, String newName) {
+        if (isLoadingConfig || shutdownSaved) return;
         File oldFile = getConfigFile(oldName);
         File newFile = getConfigFile(newName);
         if (oldFile.exists()) {
             oldFile.renameTo(newFile);
+            invalidateConfigList();
         }
     }
 
-    public String createNewConfig() {
+    public synchronized String createNewConfig() {
         String name = nextNewConfigName();
         saveConfig(name);
         loadConfig(name);
@@ -809,11 +1287,30 @@ public final class ConfigManager {
         }
     }
 
+    /**
+     * Writes a single {@link Setting} into the supplied JSON object,
+     * keyed by {@link Setting#getName()} (= {@code nameKey}). Mirrors
+     * the per-type encoding {@link vorga.phazeclient.implement.menu.components.implement.module.ModuleComponent}
+     * uses for its clipboard copy/paste flow so saved configs and the
+     * copy/paste payload share an on-disk shape - including settings
+     * the previous inline switch silently dropped (text, multi-select,
+     * multi-color, group + recursive sub-settings).
+     *
+     * <p>Skips settings that opt out of persistence via
+     * {@link Setting#isSaveToConfig()} - {@link vorga.phazeclient.api.feature.module.setting.implement.SectionSetting}
+     * and {@link vorga.phazeclient.api.feature.module.setting.implement.ButtonSetting}
+     * fall under this; they are pure UI affordances with nothing to
+     * persist.
+     */
     private static void serializeSetting(Setting setting, JsonObject target) {
         if (setting == null || !setting.isSaveToConfig()) {
             return;
         }
 
+        // Persist by the raw English key. Translated names from
+        // {@link Setting#getName()} would otherwise key the JSON by
+        // the active locale, breaking config files when the user
+        // flips the language switch.
         String key = setting.getRawName();
 
         switch (setting) {
@@ -822,7 +1319,9 @@ public final class ConfigManager {
             case TextSetting textSetting -> {
                 String value = textSetting.getText();
                 if (value != null) {
-
+                    // Match ModuleComponent's transport encoding so a config
+                    // round-trips identically through both the auto-save
+                    // pipeline and the clipboard import flow.
                     value = value.replace(" ", "%%").replace("/", "++");
                 }
                 target.addProperty(key, value);
@@ -868,17 +1367,46 @@ public final class ConfigManager {
                 target.add(key, groupObject);
             }
             default -> {
-
+                // Unsupported / non-persisting setting; drop silently so
+                // a future setting type doesn't crash the whole save.
             }
         }
     }
 
+    /**
+     * Per-setting legacy aliases. When a setting's user-facing name is
+     * renamed in code we still need to honour the old key on disk so
+     * existing user configs round-trip without resetting to default.
+     * The lookup is keyed by the CURRENT name and lists every prior
+     * name in deprecation order; first match wins.
+     *
+     * <p>Add a new entry here whenever a setting's display label
+     * changes, then drop the entry once enough release cycles have
+     * passed that everyone's configs have been re-saved with the new
+     * key.
+     */
     private static final Map<String, String[]> LEGACY_KEY_ALIASES = Map.of(
-
+            // Animations module: Chat Smooth Scroll -> Message Animation
+            // (the toggle now describes only the new-message slide-in;
+            // the smooth-scroll port was removed in commit e0233a4).
             "Message Animation", new String[]{"Chat Smooth Scroll"},
             "Message Animation Speed", new String[]{"Chat Scroll Speed"}
     );
 
+    /**
+     * Pulls a single {@link Setting} value back out of the supplied
+     * JSON object, matching the encoding produced by
+     * {@link #serializeSetting(Setting, JsonObject)}. Returns silently
+     * when the key is absent or the setting opts out of persistence.
+     *
+     * <p>Looks up {@link #LEGACY_KEY_ALIASES} when the current key is
+     * missing so renames don't reset existing user configs.
+     *
+     * <p>{@link MultiColorSetting} retains a backwards-compat path for
+     * configs written by older builds that stored a single int instead
+     * of the structured object - the legacy int is mapped onto the
+     * first color so existing user configs aren't reset on upgrade.
+     */
     private static void deserializeSetting(Setting setting, JsonObject source) {
         if (setting == null || !setting.isSaveToConfig()) {
             return;
@@ -920,7 +1448,10 @@ public final class ConfigManager {
             case MultiSelectSetting multiSelectSetting -> {
                 String value = element.getAsString();
                 List<String> selected = new ArrayList<>(Arrays.asList(value.split(",")));
-
+                // Drop entries that no longer exist in the option list
+                // (so renaming an option in code doesn't strand the user
+                // with a phantom selection that fails the equality check
+                // everywhere downstream).
                 selected.removeIf(s -> s.isEmpty() || !multiSelectSetting.getList().contains(s));
                 multiSelectSetting.setSelected(selected);
             }
@@ -981,7 +1512,7 @@ public final class ConfigManager {
                 }
             }
             default -> {
-
+                // Unsupported / non-persisting setting type.
             }
         }
     }

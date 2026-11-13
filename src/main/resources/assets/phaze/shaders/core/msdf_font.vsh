@@ -15,11 +15,13 @@ in vec4 MsdfParams;  // range, thickness, smoothness, unused
 out vec2 TexCoord;
 out vec4 FragColor;
 out vec4 vMsdfParams;
+out vec2 GlobalPos;
 
 void main() {
     TexCoord = UV0;
-    FragColor = Color;
+    FragColor = Color * ColorModulator;
     vMsdfParams = MsdfParams;
+    GlobalPos = Position.xy;
 
     gl_Position = ProjMat * ModelViewMat * vec4(Position, 1.0);
 }

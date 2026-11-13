@@ -28,10 +28,14 @@ public abstract class GameRendererZoomMixin {
     @Inject(method = "renderWorld", at = @At("HEAD"))
     private void phaze$beginNametagBlurFrame(RenderTickCounter tickCounter, CallbackInfo ci) {
         NametagHud nametag = NametagHud.getInstance();
+        MinecraftClient client = MinecraftClient.getInstance();
+        boolean hidden = client != null && client.options != null && nametag != null
+                && nametag.hideInF1.isValue() && client.options.hudHidden;
         boolean blurEnabled = nametag != null
                 && nametag.isEnabled()
                 && nametag.background.isValue()
-                && nametag.backgroundBlurRadius.getValue() > 0.0F;
+                && nametag.backgroundBlurRadius.getValue() > 0.0F
+                && !hidden;
         Blur.INSTANCE.beginWorldSpaceFrame(blurEnabled);
     }
 

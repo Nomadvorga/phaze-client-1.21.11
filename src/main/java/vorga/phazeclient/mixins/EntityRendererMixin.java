@@ -10,10 +10,12 @@ import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.render.VertexFormats;
 import net.minecraft.client.render.command.OrderedRenderCommandQueue;
 import net.minecraft.client.render.entity.EntityRenderer;
+import net.minecraft.client.render.entity.PlayerEntityRenderer;
 import net.minecraft.client.render.entity.state.EntityRenderState;
 import net.minecraft.client.render.state.CameraRenderState;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.Entity;
+import net.minecraft.text.MutableText;
 import net.minecraft.text.OrderedText;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.MathHelper;
@@ -26,8 +28,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import vorga.phazeclient.api.system.draw.PhazeDrawLayers;
 import vorga.phazeclient.api.system.shape.implement.Blur;
+import vorga.phazeclient.base.util.MessengerService;
 import vorga.phazeclient.base.util.NametagTextDecorator;
 import vorga.phazeclient.base.util.PhazeBadgeUtil;
+import vorga.phazeclient.implement.messenger.ChatWorld;
 import vorga.phazeclient.implement.cosmetics.PreviewMarker;
 import vorga.phazeclient.implement.features.modules.hud.NametagHud;
 
@@ -120,7 +124,14 @@ public abstract class EntityRendererMixin {
             index = 3
     )
     private Text phaze$decorateNametagText(Text original) {
-        return NametagTextDecorator.decorate(original, phaze$currentLabelDistance);
+        Text decorated = NametagTextDecorator.decorate(original, phaze$currentLabelDistance);
+        if (decorated == null || !((Object) this instanceof PlayerEntityRenderer)) return decorated;
+        if (MessengerService.getInstance().getTeammates().isEmpty()) return decorated;
+        String identity = PhazeBadgeUtil.extractNametagIdentity(decorated.getString());
+        if (!ChatWorld.isTeammate(identity)) return decorated;
+        MutableText styled = decorated.copy();
+        styled.setStyle(styled.getStyle().withColor(ChatWorld.TEAMMATE_COLOR));
+        return styled;
     }
 
     @SuppressWarnings("unused")

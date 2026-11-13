@@ -6,7 +6,6 @@ import org.joml.Matrix3x2fStack;
 
 import lombok.Getter;
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.util.math.MatrixStack;
 import org.joml.Matrix4f;
 import org.lwjgl.glfw.GLFW;
 import vorga.phazeclient.api.feature.module.Module;
@@ -25,6 +24,7 @@ import vorga.phazeclient.base.util.render.ScissorManager;
 import vorga.phazeclient.core.Main;
 import vorga.phazeclient.implement.menu.MenuScreen;
 import vorga.phazeclient.implement.menu.MenuStyle;
+import vorga.phazeclient.implement.menu.UiMsdfIconAtlas;
 import vorga.phazeclient.implement.menu.components.AbstractComponent;
 import vorga.phazeclient.implement.menu.components.implement.settings.AbstractSettingComponent;
 
@@ -157,15 +157,13 @@ public class ModuleDetailComponent extends AbstractComponent {
         float backIconSize = 7.5F;
         float backIconX = backButtonX() + (BACK_BUTTON_SIZE - backIconSize) / 2.0F;
         float backIconY = backButtonY() + (BACK_BUTTON_SIZE - backIconSize) / 2.0F;
-        image.setTexture("textures/back_arrow.png")
-                .render(ShapeProperties.create(matrices,
-                                backIconX - backIconSize,
-                                backIconY,
-                                backIconSize,
-                                backIconSize)
-                        .rotation(0)
-                        .color(MenuStyle.withAlpha(MenuStyle.mix(MenuStyle.TEXT_PRIMARY, 0xFFFFFFFF, backHover * 0.18F), anim))
-                        .build());
+        int backColor = MenuStyle.withAlpha(MenuStyle.mix(MenuStyle.TEXT_PRIMARY, 0xFFFFFFFF, backHover * 0.18F), anim);
+        if (!UiMsdfIconAtlas.renderBackArrow(context, backButtonX() + BACK_BUTTON_SIZE / 2.0F,
+                backButtonY() + BACK_BUTTON_SIZE / 2.0F, backIconSize, backColor)) {
+            image.setTexture("textures/back_arrow.png")
+                    .render(ShapeProperties.create(matrices, backIconX, backIconY, backIconSize, backIconSize)
+                            .color(backColor).build());
+        }
 
         String title = module.getLocalizedName().toUpperCase(Locale.ROOT);
         float titleX = backButtonX() + BACK_BUTTON_SIZE + 8.0F;
@@ -176,7 +174,7 @@ public class ModuleDetailComponent extends AbstractComponent {
 
     private void renderDescription(DrawContext context, float anim) {
         Matrix3x2fStack matrices = context.getMatrices();
-        String description = module.getDescription();
+        String description = module.getDisplayDescription();
         if (description == null || description.isEmpty()) {
             description = "Custom themes for GUI";
         }

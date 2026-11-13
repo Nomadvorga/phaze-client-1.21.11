@@ -21,7 +21,7 @@ public final class TpsHud extends RectHudModule {
     private TpsHud() {
         super("tps_hud", "TPS", 22.0F, 22.0F, 1.0F);
         colorByTps.setFullWidth(true);
-        setup(generalSection, colorByTps, otherSection, cornerRounding);
+        setup(generalSection, colorByTps);
     }
 
     public static TpsHud getInstance() {

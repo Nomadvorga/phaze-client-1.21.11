@@ -29,7 +29,7 @@ abstract class ChatHudLineConsumerMixin {
             at = @At(
                     value = "INVOKE",
                     target = "Lnet/minecraft/client/gui/hud/ChatHud$Backend;text(IFLnet/minecraft/text/OrderedText;)Z"
-            )
+            ), require = 1
     )
     private boolean phaze$offsetAllGlyphs(@Coerce Object backend, int y, float opacity, OrderedText text,
                                           Operation<Boolean> original) {
@@ -39,6 +39,12 @@ abstract class ChatHudLineConsumerMixin {
             ((ChatHudBackendPoseAccess) backend).phaze$updatePose(ChatHudLineConsumerMixin::phaze$translateActive);
         }
         try {
+            if (vorga.phazeclient.api.system.hud.ExordiumAnimationBridge.isCapturingChat()
+                    && backend instanceof ChatHudBadgeRenderAccess capture) {
+                var renderer = net.minecraft.client.MinecraftClient.getInstance().textRenderer;
+                capture.phaze$recordElement(-1, y - 1, renderer.getWidth(text) + 2, y + 10,
+                        ChatMessageAnimationRenderState.line());
+            }
             phaze$drawBadgeIfNeeded(backend, y, opacity);
             return original.call(backend, y, opacity, text);
         } finally {

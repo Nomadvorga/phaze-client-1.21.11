@@ -11,7 +11,6 @@ public final class SprintHud extends RectHudModule {
         super("sprint_hud", "Sprint HUD", 22.0f, 96.0f, 1.0f);
 
         showBrackets.visible(() -> false);
-        setup(otherSection, cornerRounding);
     }
 
     @Override

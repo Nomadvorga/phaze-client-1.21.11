@@ -1,5 +1,4 @@
 package vorga.phazeclient.implement.features.modules.other;
-
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -12,38 +11,30 @@ import vorga.phazeclient.api.feature.module.setting.implement.SelectSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.TextSetting;
 import vorga.phazeclient.base.util.Lang;
 import vorga.phazeclient.implement.features.modules.hud.RectHudModule;
-
 import java.util.Locale;
-
 public final class TrapTimer extends RectHudModule {
     private static final TrapTimer INSTANCE = new TrapTimer();
+    private static final float MIN_HUD_SCALE = 0.75F;
     public enum TrapType {
         NORMAL(15_000L),
         DRAGON(20_000L);
-
         public final long durationMs;
-
         TrapType(long durationMs) {
             this.durationMs = durationMs;
         }
     }
-
     public final SectionSetting trapSection = new SectionSetting("Trap");
-
     public final SelectSetting trapType = new SelectSetting(
             "Trap Type",
             "Which trapka variant the timer measures (regular = 15s, dragon = 20s)"
     ).value("Normal", "Dragon").selected("Normal");
-
     public final TextSetting trapName = new TextSetting(
             "Trap Name",
             "Substring matched against the held item's display name when deciding to start the timer"
     ).setText("трапка").setMax(48);
-
     private long timerStartMs = 0L;
     private boolean timerActive = false;
     private Text activeItemText = Text.empty();
-
     private TrapTimer() {
         super("trap_timer", "Trap Timer", ModuleCategory.UTILITIES, 0.0F, 0.0F, 1.0F);
         background.setValue(false);
@@ -52,30 +43,28 @@ public final class TrapTimer extends RectHudModule {
         trapName.setFullWidth(true);
         setup(trapSection, trapType, trapName, otherSection, cornerRounding);
     }
-
     public static TrapTimer getInstance() {
         return INSTANCE;
     }
-
     @Override
     public String getDescription() {
         return Lang.translate("Shows a draggable text timer for the FunTime trapka / dragon trapka cooldown");
     }
-
     @Override
     public String getIcon() {
         return "trap_timer.png";
     }
-
     @Override
     public float getIconSize() {
         return 21.0F;
     }
-
+    @Override
+    public float getMinHudScale() {
+        return MIN_HUD_SCALE;
+    }
     public TrapType getSelectedType() {
         return "Dragon".equalsIgnoreCase(trapType.getSelected()) ? TrapType.DRAGON : TrapType.NORMAL;
     }
-
     public void onItemUse(PlayerEntity player, Hand hand) {
         if (!isEnabled() || player == null || hand == null) {
             return;
@@ -94,7 +83,6 @@ public final class TrapTimer extends RectHudModule {
         }
         startTimer(stack.getName().copy());
     }
-
     public void tick() {
         if (!timerActive || !isEnabled()) {
             return;
@@ -105,7 +93,6 @@ public final class TrapTimer extends RectHudModule {
         timerActive = false;
         activeItemText = Text.empty();
     }
-
     public float getRemainingSecondsPrecise() {
         if (!timerActive) {
             return 0.0F;
@@ -114,7 +101,6 @@ public final class TrapTimer extends RectHudModule {
         long remainingMs = getSelectedType().durationMs - elapsed;
         return Math.max(0.0F, remainingMs / 1000.0F);
     }
-
     public float getProgress() {
         if (!timerActive) {
             return 0.0F;
@@ -123,11 +109,9 @@ public final class TrapTimer extends RectHudModule {
         long duration = getSelectedType().durationMs;
         return Math.min(1.0F, (float) elapsed / (float) duration);
     }
-
     public boolean isTimerActive() {
         return timerActive;
     }
-
     public Text getDisplayText(boolean preview) {
         if (!timerActive) {
             if (!preview) {
@@ -142,7 +126,6 @@ public final class TrapTimer extends RectHudModule {
                 : activeItemText.copy();
         return buildDisplayText(itemLabel, seconds);
     }
-
     public void ensureDefaultHudPosition(float screenWidth, float screenHeight, float baseWidth, float baseHeight) {
         if (getHudX() > 1.0F || getHudY() > 1.0F) {
             return;
@@ -156,7 +139,6 @@ public final class TrapTimer extends RectHudModule {
         setHudX(Math.max(0.0F, (screenWidth - hudWidth) * 0.5F));
         setHudY(Math.max(0.0F, targetCenterY - hudHeight * 0.5F));
     }
-
     private MutableText buildDisplayText(Text itemName, String seconds) {
         MutableText line = Text.literal(Lang.t("trap_timer.prefix"))
                 .append(itemName)
@@ -170,13 +152,11 @@ public final class TrapTimer extends RectHudModule {
         }
         return line;
     }
-
     private void startTimer(Text itemName) {
         timerStartMs = System.currentTimeMillis();
         timerActive = true;
         activeItemText = itemName == null ? Text.empty() : itemName.copy();
     }
-
     @Override
     public void deactivate() {
         super.deactivate();

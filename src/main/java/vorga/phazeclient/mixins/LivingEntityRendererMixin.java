@@ -2,6 +2,7 @@ package vorga.phazeclient.mixins;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.llamalad7.mixinextras.sugar.Local;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.render.VertexConsumerProvider;
@@ -21,13 +22,17 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import vorga.phazeclient.api.system.colorcorrection.WorldColorCorrectionController;
+import vorga.phazeclient.api.system.render.QueuedVertexConsumers;
 import vorga.phazeclient.implement.features.modules.hud.NametagHud;
 import vorga.phazeclient.implement.features.modules.other.HitColor;
 import vorga.phazeclient.implement.features.modules.other.HitRange;
 import vorga.phazeclient.implement.hitcolor.OverlayRendered;
 import vorga.phazeclient.implement.hitcolor.OverlayReloadListener;
+import vorga.phazeclient.implement.features.modules.other.ThreeDSkinsHelper;
 import vorga.phazeclient.implement.hitrange.HitRangeCircleRenderer;
 import vorga.phazeclient.implement.cosmetics.CosmeticsRenderer;
 import vorga.phazeclient.implement.cosmetics.PreviewMarker;
@@ -55,21 +60,23 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, S extend
             CosmeticsRenderer.renderPreview(
                     marker.phaze$previewSelection(), marker.phaze$previewAlpha(),
                     marker.phaze$previewYaw(),
-                    () -> phaze$renderCosmetics(playerState, state, matrices));
+                    () -> phaze$renderCosmetics(playerState, state, matrices, queue));
             return;
         }
-        phaze$renderCosmetics(playerState, state, matrices);
+        phaze$renderCosmetics(playerState, state, matrices, queue);
     }
 
     private void phaze$renderCosmetics(
             PlayerEntityRenderState playerState,
             S state,
-            MatrixStack matrices
+            MatrixStack matrices,
+            OrderedRenderCommandQueue queue
     ) {
         boolean preview = CosmeticsRenderer.isRenderingPreview();
+        QueuedVertexConsumers queued = preview ? null : QueuedVertexConsumers.borrow();
         VertexConsumerProvider consumers = preview
                 ? CosmeticsRenderer.previewVertexConsumers()
-                : MinecraftClient.getInstance().getBufferBuilders().getEntityVertexConsumers();
+                : queued;
 
         EntityModel<?> model = ((LivingEntityRenderer<?, ?, ?>) (Object) this).getModel();
         try {
@@ -96,8 +103,9 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, S extend
             }
         } finally {
             if (preview) {
-
                 CosmeticsRenderer.flushPreviewVertexConsumers();
+            } else if (queued != null) {
+                queued.flush(queue);
             }
         }
     }
@@ -167,7 +175,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, S extend
 
     @Inject(
             method = "render(Lnet/minecraft/client/render/entity/state/LivingEntityRenderState;Lnet/minecraft/client/util/math/MatrixStack;Lnet/minecraft/client/render/command/OrderedRenderCommandQueue;Lnet/minecraft/client/render/state/CameraRenderState;)V",
-            at = @At("TAIL")
+            at = @At("TAIL"), require = 1
     )
     private void phaze$drawHitRange(
             S state,
@@ -195,8 +203,8 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, S extend
             return;
         }
 
-        Vec3d pos = new Vec3d(state.x, state.y, state.z);
-        if (!pos.isInRange(player.getEntityPos(), config.maxDistance.getInt())) {
+        if (!HitRangeCircleRenderer.isInRange(state.x, state.y, state.z,
+                player.getX(), player.getY(), player.getZ(), config.maxDistance.getInt())) {
             return;
         }
 
@@ -210,7 +218,68 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, S extend
             return;
         }
 
-        VertexConsumerProvider vertexConsumers = client.getBufferBuilders().getEntityVertexConsumers();
-        HitRangeCircleRenderer.drawCircle(matrices, vertexConsumers, playerState);
+        vorga.phazeclient.api.system.render.WorldOverlayRenderer.queuePlayerCircle(playerState);
+    }
+
+    @ModifyArg(
+            method = "render(Lnet/minecraft/client/render/entity/state/LivingEntityRenderState;Lnet/minecraft/client/util/math/MatrixStack;Lnet/minecraft/client/render/command/OrderedRenderCommandQueue;Lnet/minecraft/client/render/state/CameraRenderState;)V",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/render/command/OrderedRenderCommandQueue;submitModel(Lnet/minecraft/client/model/Model;Ljava/lang/Object;Lnet/minecraft/client/util/math/MatrixStack;Lnet/minecraft/client/render/RenderLayer;IIILnet/minecraft/client/texture/Sprite;ILnet/minecraft/client/render/command/ModelCommandRenderer$CrumblingOverlayCommand;)V"),
+            index = 6,
+            require = 1
+    )
+    private int phaze$worldColorEntityAlpha(int color, @Local(argsOnly = true) S state) {
+        if ((color >>> 24) < 250) return color;
+        boolean player = state instanceof PlayerEntityRenderState;
+        WorldColorCorrectionController.Target target = player
+                ? WorldColorCorrectionController.Target.PLAYERS
+                : WorldColorCorrectionController.Target.ENTITIES;
+        if (!WorldColorCorrectionController.isTargetActive(target)) return color;
+        int sentinel = player ? 254 : 253;
+        return (color & 0x00FFFFFF) | (sentinel << 24);
+    }
+
+    @Inject(
+            method = "render(Lnet/minecraft/client/render/entity/state/LivingEntityRenderState;Lnet/minecraft/client/util/math/MatrixStack;Lnet/minecraft/client/render/command/OrderedRenderCommandQueue;Lnet/minecraft/client/render/state/CameraRenderState;)V",
+            at = @At("HEAD"),
+            require = 1
+    )
+    private void phaze$applyThreeDSkins(
+            S state,
+            MatrixStack matrices,
+            OrderedRenderCommandQueue queue,
+            CameraRenderState cameraState,
+            CallbackInfo ci
+    ) {
+        EntityModel<?> model = ((LivingEntityRenderer<?, ?, ?>) (Object) this).getModel();
+        if (state instanceof PlayerEntityRenderState playerState && model instanceof PlayerEntityModel) {
+            ThreeDSkinsHelper.preRender(playerState);
+        }
+    }
+
+    @Inject(
+            method = "render(Lnet/minecraft/client/render/entity/state/LivingEntityRenderState;Lnet/minecraft/client/util/math/MatrixStack;Lnet/minecraft/client/render/command/OrderedRenderCommandQueue;Lnet/minecraft/client/render/state/CameraRenderState;)V",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/util/math/MatrixStack;pop()V", shift = At.Shift.BEFORE),
+            require = 1
+    )
+    private void phaze$restoreThreeDSkins(
+            S state,
+            MatrixStack matrices,
+            OrderedRenderCommandQueue queue,
+            CameraRenderState cameraState,
+            CallbackInfo ci
+    ) {
+        EntityModel<?> model = ((LivingEntityRenderer<?, ?, ?>) (Object) this).getModel();
+        if (state instanceof PlayerEntityRenderState playerState && model instanceof PlayerEntityModel playerModel) {
+            QueuedVertexConsumers queued = QueuedVertexConsumers.borrow();
+            try {
+                ThreeDSkinsHelper.postRender(
+                        playerModel, playerState, matrices, queued,
+                        state.light,
+                        LivingEntityRenderer.getOverlay(playerState, this.getAnimationCounter(state))
+                );
+            } finally {
+                queued.flush(queue);
+            }
+        }
     }
 }

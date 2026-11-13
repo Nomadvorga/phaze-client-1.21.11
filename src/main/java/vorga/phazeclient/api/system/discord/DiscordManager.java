@@ -11,7 +11,8 @@ import java.time.Month;
 
 public class DiscordManager {
     private final DiscordDaemonThread discordDaemonThread = new DiscordDaemonThread();
-    private boolean running = true;
+    private final Object rpcLock = new Object();
+    private volatile boolean running;
     private DiscordInfo info = new DiscordInfo("Unknown", "", "");
     private long startTimestamp = System.currentTimeMillis() / 1000;
 
@@ -43,13 +44,21 @@ public class DiscordManager {
             updatePresence();
         }).build();
 
-        DiscordRPC.INSTANCE.Discord_Initialize("1500846872087105639", handlers, true, "");
+        synchronized (rpcLock) {
+            DiscordRPC.INSTANCE.Discord_Initialize("1500846872087105639", handlers, true, "");
+            this.running = true;
+        }
+        discordDaemonThread.setDaemon(true);
         discordDaemonThread.start();
     }
 
     public void stopRPC() {
-        DiscordRPC.INSTANCE.Discord_Shutdown();
-        this.running = false;
+        synchronized (rpcLock) {
+            if (!running) return;
+            this.running = false;
+            discordDaemonThread.interrupt();
+            if (DiscordRPC.INSTANCE != null) DiscordRPC.INSTANCE.Discord_Shutdown();
+        }
     }
 
     private void updatePresence() {
@@ -142,10 +151,16 @@ public class DiscordManager {
 
             try {
                 while (Main.getInstance().getDiscordManager().isRunning()) {
-                    DiscordRPC.INSTANCE.Discord_RunCallbacks();
-                    updatePresence();
+                    synchronized (rpcLock) {
+                        if (!running) break;
+                        DiscordRPC.INSTANCE.Discord_RunCallbacks();
+                        updatePresence();
+                    }
                     Thread.sleep(15000);
                 }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                stopRPC();
             } catch (Exception exception) {
                 System.err.println("Stop Discord RPC " + exception.getMessage());
                 stopRPC();

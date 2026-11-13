@@ -135,9 +135,9 @@ void main() {
         float sample_offset = sample_index + jitter;
 
         vec2 pos = texCoord + sample_offset * baseStep;
-        vec3 color = texture(MainSampler, pos).rgb;
+        vec3 sampleColor = texture(MainSampler, pos).rgb;
 
-        color_sum += color * color;
+        color_sum += sampleColor * sampleColor;
     }
     color = vec4(sqrt(color_sum * safeInverseSamples), 1.0);
 }

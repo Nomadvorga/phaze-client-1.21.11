@@ -1,19 +1,15 @@
 package vorga.phazeclient.base.util;
-
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ServerInfo;
-
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-
 public class ServerUtil {
     private static final Set<String> FUN_TIME_SEGMENTS = Set.of("funtime", "funsky");
     private static volatile String cachedAddressInput;
     private static volatile String cachedNormalizedHost = "";
-
     private static final Set<String> SHIFT_TAP_SEGMENTS = Set.of(
             "funtime",
             "funmoon",
@@ -130,33 +126,26 @@ public class ServerUtil {
             Map.entry("shifttap", SHIFT_TAP_SEGMENTS),
             Map.entry("trap_timer", TRAP_TIMER_SEGMENTS)
     );
-
     public static String getCurrentServerHost() {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc == null) return "";
-
         if (mc.isInSingleplayer()) return "";
-
         ServerInfo entry = mc.getCurrentServerEntry();
         if (entry != null && entry.address != null) {
             return stripPort(entry.address);
         }
-
         var handler = mc.getNetworkHandler();
         if (handler == null) return "";
-
         ServerInfo handlerInfo = handler.getServerInfo();
         if (handlerInfo != null && handlerInfo.address != null) {
             return stripPort(handlerInfo.address);
         }
-
         SocketAddress peer = handler.getConnection().getAddress();
         if (peer instanceof InetSocketAddress isa && isa.getHostString() != null) {
             return stripPort(isa.getHostString());
         }
         return "";
     }
-
     private static String stripPort(String addr) {
         if (addr.equals(cachedAddressInput)) {
             return cachedNormalizedHost;
@@ -168,31 +157,25 @@ public class ServerUtil {
         cachedAddressInput = addr;
         return normalized;
     }
-
     private static boolean hasServerSegment(String expectedSegment) {
         String host = getCurrentServerHost();
         if (host.isEmpty()) {
             return false;
         }
-
         return containsHostSegment(host, expectedSegment);
     }
-
     private static boolean hasAnyServerSegment(Set<String> expectedSegments) {
         String host = getCurrentServerHost();
         if (host.isEmpty()) {
             return false;
         }
-
         for (String expectedSegment : expectedSegments) {
             if (containsHostSegment(host, expectedSegment)) {
                 return true;
             }
         }
-
         return false;
     }
-
     private static boolean containsHostSegment(String host, String expectedSegment) {
         int start = 0;
         while (start <= host.length()) {
@@ -212,7 +195,6 @@ public class ServerUtil {
         }
         return false;
     }
-
     private static boolean isSingleplayerOrHasAnyServerSegment(Set<String> expectedSegments) {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc == null) {
@@ -223,71 +205,61 @@ public class ServerUtil {
         }
         return hasAnyServerSegment(expectedSegments);
     }
-
     public static boolean isFunTimeServer() {
         return hasAnyServerSegment(FUN_TIME_SEGMENTS);
     }
-
     public static boolean isFunTrainerServer() {
         return hasServerSegment("funtrainer");
     }
-
     public static boolean isFillCubeServer() {
         return hasServerSegment("fillcube");
     }
-
     public static boolean isHolyWorldServer() {
         return hasServerSegment("holyworld");
     }
-
     public static boolean isShiftTapSupported() {
-        return isSingleplayerOrHasAnyServerSegment(SHIFT_TAP_SEGMENTS);
+        return isSupported("shifttap", SHIFT_TAP_SEGMENTS);
     }
-
     public static boolean isAutoSwapSupported() {
-        return isSingleplayerOrHasAnyServerSegment(AUTO_SWAP_SEGMENTS);
+        return isSupported("autoswap", AUTO_SWAP_SEGMENTS);
     }
-
     public static boolean isAutoPotionSupported() {
-        return isSingleplayerOrHasAnyServerSegment(AUTO_POTION_SEGMENTS);
+        return isSupported("autopotion", AUTO_POTION_SEGMENTS);
     }
-
     public static boolean isElytraUtilitySupported() {
-        return isSingleplayerOrHasAnyServerSegment(ELYTRA_UTILITY_SEGMENTS);
+        return isSupported("elytrautility", ELYTRA_UTILITY_SEGMENTS);
     }
-
     public static boolean isItemScrollerSupported() {
-        return isSingleplayerOrHasAnyServerSegment(ITEM_SCROLLER_SEGMENTS);
+        return isSupported("item_scroller", ITEM_SCROLLER_SEGMENTS);
     }
-
     public static boolean isMouseClickerSupported() {
-        return isSingleplayerOrHasAnyServerSegment(MOUSE_CLICKER_SEGMENTS);
+        return isSupported("mouseclicker", MOUSE_CLICKER_SEGMENTS);
     }
-
     public static boolean isAutoReissueSupported() {
-        return isSingleplayerOrHasAnyServerSegment(AUTO_REISSUE_SEGMENTS);
+        return isSupported("autoreissue", AUTO_REISSUE_SEGMENTS);
     }
-
     public static boolean hasMirroredModuleRule(String moduleId) {
         if (moduleId == null || moduleId.isEmpty()) {
             return false;
         }
         return MIRRORED_MODULE_SEGMENTS.containsKey(moduleId.toLowerCase());
     }
-
     public static boolean isModuleAllowedByMirroredRules(String moduleId) {
         if (moduleId == null || moduleId.isEmpty()) {
             return true;
         }
-
         Set<String> allowedSegments = MIRRORED_MODULE_SEGMENTS.get(moduleId.toLowerCase());
         if (allowedSegments == null) {
             return true;
         }
-
+        return isSupported(moduleId, allowedSegments);
+    }
+    private static boolean isSupported(String moduleId, Set<String> allowedSegments) {
+        if (RemoteRulesService.getInstance().isModuleExplicitlyAllowed(moduleId)) {
+            return true;
+        }
         return isSingleplayerOrHasAnyServerSegment(allowedSegments);
     }
-
     public static String getServerAddress() {
         return getCurrentServerHost();
     }

@@ -29,6 +29,7 @@ import org.joml.Matrix4f;
 public class Image implements Shape, QuickImports {
 
     private static final Map<Identifier, RenderLayer> TEXTURED_LAYERS = new HashMap<>();
+    private static final Map<String, Identifier> IDENTIFIERS = new HashMap<>();
 
     private String texture;
 
@@ -48,7 +49,7 @@ public class Image implements Shape, QuickImports {
 
         Matrix3x2f pose = new Matrix3x2f(shape.getMatrix());
 
-        Identifier textureId = Identifier.of(texture);
+        Identifier textureId = IDENTIFIERS.computeIfAbsent(texture, Identifier::of);
 
         float width = shape.getWidth();
         float x = shape.getX() + width;

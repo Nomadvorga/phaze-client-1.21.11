@@ -6,20 +6,16 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.FilterMode;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.render.BufferBuilder;
-import net.minecraft.client.render.BuiltBuffer;
-import net.minecraft.client.render.Tessellator;
-import com.mojang.blaze3d.vertex.VertexFormat;
-import net.minecraft.client.render.VertexFormats;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.AbstractTexture;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.resource.Resource;
 import net.minecraft.util.Identifier;
 import org.joml.Matrix4f;
+import vorga.phazeclient.api.system.font.msdf.MsdfBatch;
 import vorga.phazeclient.api.system.font.msdf.MsdfRenderer;
+import vorga.phazeclient.api.system.shape.batched.GuiBatch;
 import vorga.phazeclient.api.system.font.msdf.ResourceProvider;
-import vorga.phazeclient.api.system.shape.batched.BatchedRectangle;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -32,18 +28,12 @@ public final class UiMsdfIconAtlas {
     private static final MinecraftClient MC = MinecraftClient.getInstance();
     private static final Identifier ATLAS_TEXTURE_ID = Identifier.of("phaze", "msdf/ui_icons.png");
     private static final Identifier ATLAS_DATA_ID = Identifier.of("phaze", "msdf/ui_icons.json");
-    private static final Identifier SEARCH_ICON_ID = Identifier.ofVanilla("textures/search_lunar.png");
-    private static final Identifier BACK_ARROW_ICON_ID = Identifier.ofVanilla("textures/back_arrow.png");
-    private static final Identifier MENU_CROSS_ICON_ID = Identifier.of("phaze", "textures/menu/cross.png");
+    public static final Identifier BACK_ARROW_ICON_ID = Identifier.ofVanilla("textures/back_arrow.png");
+    private static final float BACK_ARROW_INK_HEIGHT = 14.7972F / 24.0F;
     private static final float DEFAULT_DISTANCE_RANGE = 12.0F;
     private static final float SMOOTHNESS = 0.42F;
     private static final float THICKNESS = 0.0F;
     private static final float UV_INSET = 1.0F;
-    private static final Set<Identifier> RASTER_FALLBACK_ICONS = Set.of(
-            SEARCH_ICON_ID,
-            BACK_ARROW_ICON_ID,
-            MENU_CROSS_ICON_ID
-    );
 
     private static final Map<Identifier, AtlasIcon> ATLAS_ICONS = new HashMap<>();
     private static final Set<Identifier> MISSING_ICONS = new HashSet<>();
@@ -64,6 +54,16 @@ public final class UiMsdfIconAtlas {
         }
     }
 
+    public static synchronized void onResourcesReloaded() {
+        filterApplied = false;
+        atlasTexture = null;
+        atlasLoaded = false;
+        globalFailed = false;
+        ATLAS_ICONS.clear();
+        MISSING_ICONS.clear();
+        ASPECT_RATIO_CACHE.clear();
+    }
+
     public static void registerTexture(String texture) {
         try {
             registerTexture(Identifier.of(texture));
@@ -72,10 +72,35 @@ public final class UiMsdfIconAtlas {
     }
 
     public static synchronized void registerTexture(Identifier icon) {
-        if (icon == null || globalFailed || RASTER_FALLBACK_ICONS.contains(icon)) {
+        if (icon == null || globalFailed) {
             return;
         }
         ensureAtlasLoaded();
+    }
+
+    public static boolean renderBackArrow(DrawContext context, float centerX, float centerY, float size, int color) {
+        IconInk ink = ink(BACK_ARROW_ICON_ID);
+        float drawSize = size * BACK_ARROW_INK_HEIGHT / Math.max(0.0001F, ink.height());
+        return renderIcon(context, BACK_ARROW_ICON_ID,
+                centerX - drawSize * ink.centerX(), centerY - drawSize * ink.centerY(),
+                drawSize, drawSize, color, true);
+    }
+
+    public static boolean renderIconInkFitted(DrawContext context, Identifier icon, float centerX, float centerY,
+                                             float maxInkWidth, float maxInkHeight, int color) {
+        IconInk ink = ink(icon);
+        float aspect = resolveAspectRatio(icon);
+        float scale = Math.min(maxInkWidth / Math.max(0.0001F, aspect * ink.width()),
+                maxInkHeight / Math.max(0.0001F, ink.height()));
+        return renderIconInkScaled(context, icon, centerX, centerY, scale, color);
+    }
+
+    public static boolean renderIconInkScaled(DrawContext context, Identifier icon, float centerX, float centerY,
+                                             float quadHeight, int color) {
+        IconInk ink = ink(icon);
+        float quadWidth = quadHeight * resolveAspectRatio(icon);
+        return renderIcon(context, icon, centerX - quadWidth * ink.centerX(), centerY - quadHeight * ink.centerY(),
+                quadWidth, quadHeight, color, true);
     }
 
     public static boolean renderIcon(
@@ -88,6 +113,11 @@ public final class UiMsdfIconAtlas {
             int color,
             boolean precise
     ) {
+        return renderIcon(context, icon, x, y, width, height, color, precise, THICKNESS, SMOOTHNESS);
+    }
+
+    public static boolean renderIcon(DrawContext context, Identifier icon, float x, float y, float width,
+                                     float height, int color, boolean precise, float thickness, float smoothness) {
         AtlasIcon atlasIcon = ensureIconReady(icon);
         if (atlasIcon == null) {
             return false;
@@ -98,7 +128,8 @@ public final class UiMsdfIconAtlas {
         float drawWidth = precise ? Math.max(1.0F, width) : Math.max(1.0F, Math.round(width));
         float drawHeight = precise ? Math.max(1.0F, height) : Math.max(1.0F, Math.round(height));
         FittedRect fittedRect = fitRect(x1, y1, drawWidth, drawHeight, atlasIcon.aspectRatio);
-        return renderQuad(GuiMatrix.mat4(context.getMatrices()), atlasIcon, fittedRect.left, fittedRect.top, fittedRect.right, fittedRect.bottom, color, false);
+        return renderQuad(GuiMatrix.mat4(context.getMatrices()), atlasIcon, fittedRect.left, fittedRect.top,
+                fittedRect.right, fittedRect.bottom, color, false, thickness, smoothness);
     }
 
     public static boolean renderIconClippedVertical(
@@ -129,7 +160,7 @@ public final class UiMsdfIconAtlas {
         float bottomFraction = (visibleBottom - fittedRect.top) / fittedHeight;
         float minV = atlasIcon.minV + (atlasIcon.maxV - atlasIcon.minV) * topFraction;
         float maxV = atlasIcon.minV + (atlasIcon.maxV - atlasIcon.minV) * bottomFraction;
-        AtlasIcon clippedIcon = new AtlasIcon(atlasIcon.minU, minV, atlasIcon.maxU, maxV, atlasIcon.aspectRatio);
+        AtlasIcon clippedIcon = new AtlasIcon(atlasIcon.minU, minV, atlasIcon.maxU, maxV, atlasIcon.aspectRatio, atlasIcon.ink);
 
         return renderQuad(
                 GuiMatrix.mat4(context.getMatrices()),
@@ -228,10 +259,9 @@ public final class UiMsdfIconAtlas {
                         float aspectRatio = iconDefinition.contentAspectRatio > 0.0F
                                 ? iconDefinition.contentAspectRatio
                                 : iconWidth / iconHeight;
-                        ATLAS_ICONS.put(identifier, new AtlasIcon(minU, minV, maxU, maxV, aspectRatio));
-                        if (!RASTER_FALLBACK_ICONS.contains(identifier)) {
-                            ASPECT_RATIO_CACHE.put(identifier, aspectRatio);
-                        }
+                        ATLAS_ICONS.put(identifier, new AtlasIcon(minU, minV, maxU, maxV, aspectRatio,
+                                resolveInk(bounds, iconDefinition.inkBounds)));
+                        ASPECT_RATIO_CACHE.put(identifier, aspectRatio);
                     } catch (Throwable ignored) {
                     }
                 }
@@ -249,7 +279,7 @@ public final class UiMsdfIconAtlas {
     }
 
     private static synchronized AtlasIcon ensureIconReady(Identifier icon) {
-        if (icon == null || globalFailed || MC == null || MC.getTextureManager() == null || RASTER_FALLBACK_ICONS.contains(icon)) {
+        if (icon == null || globalFailed || MC == null || MC.getTextureManager() == null) {
             return null;
         }
         if (!atlasLoaded && !ensureAtlasLoaded()) {
@@ -266,13 +296,28 @@ public final class UiMsdfIconAtlas {
         return atlasIcon;
     }
 
+    public static synchronized IconInk ink(Identifier icon) {
+        AtlasIcon atlasIcon = ensureIconReady(icon);
+        return atlasIcon == null ? IconInk.FULL : atlasIcon.ink;
+    }
+
+    private static IconInk resolveInk(AtlasBounds cell, AtlasBounds ink) {
+        if (ink == null || !Float.isFinite(ink.left) || !Float.isFinite(ink.top)
+                || !Float.isFinite(ink.right) || !Float.isFinite(ink.bottom)
+                || ink.right <= ink.left || ink.bottom <= ink.top) {
+            return IconInk.FULL;
+        }
+        float left = cell.left + UV_INSET;
+        float top = cell.top + UV_INSET;
+        float width = Math.max(1.0F, cell.right - cell.left - UV_INSET * 2.0F);
+        float height = Math.max(1.0F, cell.bottom - cell.top - UV_INSET * 2.0F);
+        return new IconInk((ink.left - left) / width, (ink.top - top) / height,
+                (ink.right - left) / width, (ink.bottom - top) / height);
+    }
+
     public static float resolveAspectRatio(Identifier icon) {
         if (icon == null) {
             return 1.0F;
-        }
-
-        if (RASTER_FALLBACK_ICONS.contains(icon)) {
-            return resolveResourceAspectRatio(icon);
         }
 
         Float cached = ASPECT_RATIO_CACHE.get(icon);
@@ -299,19 +344,20 @@ public final class UiMsdfIconAtlas {
     }
 
     private static float resolveResourceAspectRatio(Identifier icon) {
+        Float cached = ASPECT_RATIO_CACHE.get(icon);
+        if (cached != null) return cached;
         try {
             Optional<Resource> resource = MC.getResourceManager().getResource(icon);
             if (resource.isPresent()) {
-                try (InputStream stream = resource.get().getInputStream()) {
-                    NativeImage image = NativeImage.read(stream);
+                try (InputStream stream = resource.get().getInputStream(); NativeImage image = NativeImage.read(stream)) {
                     float aspectRatio = image.getWidth() / (float) Math.max(1, image.getHeight());
-                    image.close();
                     ASPECT_RATIO_CACHE.put(icon, aspectRatio);
                     return aspectRatio;
                 }
             }
         } catch (Throwable ignored) {
         }
+        ASPECT_RATIO_CACHE.put(icon, 1.0F);
         return 1.0F;
     }
 
@@ -331,19 +377,35 @@ public final class UiMsdfIconAtlas {
     }
 
     private static boolean renderQuad(Matrix4f matrix, AtlasIcon atlasIcon, float x1, float y1, float x2, float y2, int color, boolean legacyImageOrientation) {
-        BatchedRectangle.flushIfBatching();
+        return renderQuad(matrix, atlasIcon, x1, y1, x2, y2, color, legacyImageOrientation, THICKNESS, SMOOTHNESS);
+    }
 
+    private static boolean renderQuad(Matrix4f matrix, AtlasIcon atlasIcon, float x1, float y1, float x2, float y2,
+                                      int color, boolean legacyImageOrientation, float thickness, float smoothness) {
         if (!filterApplied && atlasTexture != null && RenderSystem.isOnRenderThread()) {
             atlasTexture.sampler = RenderSystem.getSamplerCache().get(FilterMode.LINEAR);
             filterApplied = true;
         }
 
+        com.mojang.blaze3d.textures.GpuTextureView view = atlasTexture == null ? null : atlasTexture.getGlTextureView();
+        if (view != null && MsdfBatch.canDefer()) {
+            GuiBatch.Run run = MsdfBatch.beginIcon(view, distanceRange, thickness, smoothness);
+            float width = x2 - x1;
+            float height = y2 - y1;
+            if (legacyImageOrientation) {
+                run.quad(matrix, x1, y1, width, height, 0.0F,
+                        atlasIcon.maxU, atlasIcon.minV, atlasIcon.minU, atlasIcon.maxV, color, GuiBatch.UV_SWAP);
+            } else {
+                run.quad(matrix, x1, y1, width, height, 0.0F,
+                        atlasIcon.minU, atlasIcon.minV, atlasIcon.maxU, atlasIcon.maxV, color, 0);
+            }
+            return true;
+        }
+
         MsdfRenderer.drawAtlasQuad(
-                atlasTexture == null ? null : atlasTexture.getGlTextureView(),
-                matrix,
-                x1, y1, x2, y2,
+                view, matrix, x1, y1, x2, y2,
                 atlasIcon.minU, atlasIcon.minV, atlasIcon.maxU, atlasIcon.maxV,
-                color, distanceRange, THICKNESS, SMOOTHNESS,
+                color, distanceRange, thickness, smoothness,
                 legacyImageOrientation);
 
         return true;
@@ -364,6 +426,7 @@ public final class UiMsdfIconAtlas {
         private String id;
         private float contentAspectRatio;
         private AtlasBounds atlasBounds;
+        private AtlasBounds inkBounds;
     }
 
     private static final class AtlasBounds {
@@ -373,7 +436,16 @@ public final class UiMsdfIconAtlas {
         private float bottom;
     }
 
-    private record AtlasIcon(float minU, float minV, float maxU, float maxV, float aspectRatio) {
+    private record AtlasIcon(float minU, float minV, float maxU, float maxV, float aspectRatio, IconInk ink) {
+    }
+
+    public record IconInk(float left, float top, float right, float bottom) {
+        public static final IconInk FULL = new IconInk(0.0F, 0.0F, 1.0F, 1.0F);
+
+        public float width() { return right - left; }
+        public float height() { return bottom - top; }
+        public float centerX() { return (left + right) * 0.5F; }
+        public float centerY() { return (top + bottom) * 0.5F; }
     }
 
     private record FittedRect(float left, float top, float right, float bottom) {

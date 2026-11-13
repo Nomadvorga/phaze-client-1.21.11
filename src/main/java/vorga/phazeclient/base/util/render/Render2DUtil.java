@@ -79,6 +79,10 @@ public class Render2DUtil implements QuickImports {
     }
 
     public void drawHead(@NonNull DrawContext context, Identifier id, float x, float y, float size, float round, int backgroundColor, int color) {
+        drawHead(context, id, x, y, size, round, backgroundColor, color, true);
+    }
+
+    public void drawHead(@NonNull DrawContext context, Identifier id, float x, float y, float size, float round, int backgroundColor, int color, boolean overlay) {
         Matrix3x2fStack matrix = context.getMatrices();
         rectangle.render(ShapeProperties.create(matrix, x, y, size, size).round(round).color(backgroundColor).build());
 
@@ -95,20 +99,21 @@ public class Render2DUtil implements QuickImports {
             float v1_base = 8.0F / 64.0F;
             float v2_base = 16.0F / 64.0F;
 
-            float u1_overlay = 40.0F / 64.0F;
-            float u2_overlay = 48.0F / 64.0F;
-            float v1_overlay = 8.0F / 64.0F;
-            float v2_overlay = 16.0F / 64.0F;
-
             buffer.vertex(matrix4f, 0, 0, 0).texture(u1_base, v1_base).color(color);
             buffer.vertex(matrix4f, 0, 1, 0).texture(u1_base, v2_base).color(color);
             buffer.vertex(matrix4f, 1, 1, 0).texture(u2_base, v2_base).color(color);
             buffer.vertex(matrix4f, 1, 0, 0).texture(u2_base, v1_base).color(color);
 
-            buffer.vertex(matrix4f, 0, 0, 0).texture(u1_overlay, v1_overlay).color(color);
-            buffer.vertex(matrix4f, 0, 1, 0).texture(u1_overlay, v2_overlay).color(color);
-            buffer.vertex(matrix4f, 1, 1, 0).texture(u2_overlay, v2_overlay).color(color);
-            buffer.vertex(matrix4f, 1, 0, 0).texture(u2_overlay, v1_overlay).color(color);
+            if (overlay) {
+                float u1_overlay = 40.0F / 64.0F;
+                float u2_overlay = 48.0F / 64.0F;
+                float v1_overlay = 8.0F / 64.0F;
+                float v2_overlay = 16.0F / 64.0F;
+                buffer.vertex(matrix4f, 0, 0, 0).texture(u1_overlay, v1_overlay).color(color);
+                buffer.vertex(matrix4f, 0, 1, 0).texture(u1_overlay, v2_overlay).color(color);
+                buffer.vertex(matrix4f, 1, 1, 0).texture(u2_overlay, v2_overlay).color(color);
+                buffer.vertex(matrix4f, 1, 0, 0).texture(u2_overlay, v1_overlay).color(color);
+            }
 
             GuiProjection.begin();
             try {
@@ -141,9 +146,12 @@ public class Render2DUtil implements QuickImports {
     }
 
     public void drawTexturedQuad(@NonNull Matrix3x2fc matrix, @NonNull Identifier texture, float x1, float x2, float y1, float y2, float u1, float u2, float v1, float v2, int color) {
+        drawTexturedQuad(GuiMatrix.mat4(matrix), texture, x1, x2, y1, y2, u1, u2, v1, v2, color);
+    }
+
+    public void drawTexturedQuad(@NonNull Matrix4f matrix4f, @NonNull Identifier texture, float x1, float x2, float y1, float y2, float u1, float u2, float v1, float v2, int color) {
         BatchedRectangle.flushIfBatching();
         BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_TEXTURE_COLOR);
-        Matrix4f matrix4f = GuiMatrix.mat4(matrix);
         buffer.vertex(matrix4f, x1, y1, 0).texture(u1, v1).color(color);
         buffer.vertex(matrix4f, x1, y2, 0).texture(u1, v2).color(color);
         buffer.vertex(matrix4f, x2, y2, 0).texture(u2, v2).color(color);

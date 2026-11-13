@@ -66,9 +66,9 @@ public final class BatchedRectangle {
                     .build();
 
             RenderPipeline pipeline = RenderPipeline.builder()
-                    .withLocation(Identifier.of("phaze", "pipeline/round_batched"))
-                    .withVertexShader(Identifier.of("phaze", "core/round_batched"))
-                    .withFragmentShader(Identifier.of("phaze", "core/round_batched"))
+                    .withLocation(Identifier.of("phaze", "pipeline/gui_batched"))
+                    .withVertexShader(Identifier.of("phaze", "core/gui_batched"))
+                    .withFragmentShader(Identifier.of("phaze", "core/gui_batched"))
                     .withUniform("DynamicTransforms", UniformType.UNIFORM_BUFFER)
                     .withUniform("Projection", UniformType.UNIFORM_BUFFER)
                     .withVertexFormat(format, VertexFormat.DrawMode.QUADS)
@@ -79,7 +79,7 @@ public final class BatchedRectangle {
                     .build();
 
             layer = RenderLayer.of(
-                    "phaze_round_batched",
+                    "phaze_gui_batched",
                     RenderSetup.builder(pipeline).translucent().build());
             disabled = false;
         } catch (Throwable t) {
@@ -107,6 +107,7 @@ public final class BatchedRectangle {
     }
 
     private static int scopeDepth = 0;
+    private static boolean enabled = true;
     private static BufferBuilder activeBuilder = null;
     private static int pendingRects = 0;
     private static final Vector3f SCRATCH_BASE_POS = new Vector3f();
@@ -119,8 +120,7 @@ public final class BatchedRectangle {
     }
 
     public static void beginScope() {
-
-        if (DISABLED) {
+        if (DISABLED || (!enabled && scopeDepth == 0)) {
             return;
         }
         scopeDepth++;
@@ -132,6 +132,7 @@ public final class BatchedRectangle {
         }
         if (--scopeDepth == 0) {
             flush();
+            vorga.phazeclient.api.system.font.msdf.MsdfBatch.flush();
         }
     }
 
@@ -139,9 +140,15 @@ public final class BatchedRectangle {
         return !DISABLED && scopeDepth > 0;
     }
 
+    /** A/B switch for benchmarks: scopes opened while disabled render everything eagerly. */
+    public static void setEnabled(boolean value) {
+        enabled = value;
+    }
+
     public static void flushIfBatching() {
         if (isBatching()) {
             flush();
+            vorga.phazeclient.api.system.font.msdf.MsdfBatch.flush();
         }
     }
 
@@ -150,10 +157,17 @@ public final class BatchedRectangle {
         renderTargetFbHeightOverride = fbHeight;
     }
 
+    /** Restore a saved height without flushing geometry from an aborted capture. */
+    public static void restoreRenderTargetFbHeight(float fbHeight) {
+        renderTargetFbHeightOverride = fbHeight;
+    }
+
     public static void clearRenderTargetFbHeight() {
         flushIfBatching();
         renderTargetFbHeightOverride = -1.0F;
     }
+
+    public static float getRenderTargetFbHeightOverride() { return renderTargetFbHeightOverride; }
 
     public static float getActiveFbHeight() {
         if (renderTargetFbHeightOverride > 0.0F) {
@@ -182,14 +196,20 @@ public final class BatchedRectangle {
 
         vorga.phazeclient.api.system.draw.GuiProjection.begin();
         try {
-
-            BATCHED_LAYER.draw(built);
+            GuiBatch.holdFlush();
+            try {
+                BATCHED_LAYER.draw(built);
+            } finally {
+                GuiBatch.dropFlush();
+            }
         } finally {
             vorga.phazeclient.api.system.draw.GuiProjection.end();
         }
     }
 
     public static void submit(ShapeProperties shape) {
+        vorga.phazeclient.api.system.font.msdf.MsdfBatch.flush();
+        GuiBatch.flushVanilla();
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc == null || mc.getWindow() == null) {
             return;
@@ -225,7 +245,7 @@ public final class BatchedRectangle {
         int outlineColor = ColorUtil.multAlpha(shape.getOutlineColor(), globalAlpha);
 
         if (activeBuilder == null) {
-            activeBuilder = Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, BATCHED_FORMAT);
+            activeBuilder = vorga.phazeclient.api.system.hud.Render2DBuffers.beginBatch(BATCHED_FORMAT);
         }
 
         float x0 = shape.getX() - softness / 2.0F;
@@ -279,5 +299,18 @@ public final class BatchedRectangle {
         MemoryUtil.memPutFloat(ptr + 4L, ColorUtil.greenf(outlineColor));
         MemoryUtil.memPutFloat(ptr + 8L, ColorUtil.bluef(outlineColor));
         MemoryUtil.memPutFloat(ptr + 12L, ColorUtil.alphaf(outlineColor));
+    }
+
+    /** Release unfinished native geometry at reload/stop; never paint an aborted capture. */
+    public static void discardPending() {
+        activeBuilder = null;
+        pendingRects = 0;
+        vorga.phazeclient.api.system.hud.Render2DBuffers.discardBatch();
+    }
+
+    public static void cleanup() {
+        discardPending();
+        scopeDepth = 0;
+        renderTargetFbHeightOverride = -1;
     }
 }

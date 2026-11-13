@@ -15,7 +15,6 @@ public final class MovementSpeedHud extends RectHudModule {
     public final SelectSetting roundTo = new SelectSetting("Round To", "Decimal places for speed display")
             .value("Nearest", "1 Decimal", "2 Decimals", "3 Decimals")
             .selected("2 Decimals");
-    public final SectionSetting otherSection = new SectionSetting("Other");
 
     public final BooleanSetting reverseOrder = new BooleanSetting("Reverse Order", "Add \"Speed:\" prefix instead of just \"X m/s\"").setValue(false);
 
@@ -24,7 +23,7 @@ public final class MovementSpeedHud extends RectHudModule {
         onlyUseGroundSpeed.setFullWidth(true);
         roundTo.setFullWidth(true);
         reverseOrder.setFullWidth(true);
-        setup(onlyUseGroundSpeed, roundTo, otherSection, reverseOrder, cornerRounding);
+        setup(onlyUseGroundSpeed, roundTo, reverseOrder);
     }
 
     @Override

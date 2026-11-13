@@ -1,11 +1,9 @@
 package vorga.phazeclient.implement.features.modules.other;
-
 import net.minecraft.client.MinecraftClient;
 import vorga.phazeclient.api.feature.module.Module;
 import vorga.phazeclient.api.feature.module.ModuleCategory;
 import vorga.phazeclient.api.feature.module.setting.implement.*;
 import vorga.phazeclient.base.util.ServerUtil;
-
 public final class ShiftTap extends Module {
     private static final org.slf4j.Logger LOGGER =
             org.slf4j.LoggerFactory.getLogger("Phaze/ShiftTap");
@@ -13,66 +11,51 @@ public final class ShiftTap extends Module {
     private static final int MIN_DURATION = 10;
     private static final int MAX_DURATION = 200;
     private static final long BLOCK_NOTIFY_INTERVAL_MS = 10000L;
-
     private long lastBlockNotifyMs = 0L;
-
     public final SectionSetting generalSection = new SectionSetting("General");
     public final ValueSetting sneakDuration = new ValueSetting("Sneak Duration", "Duration of sneak in milliseconds")
             .range(MIN_DURATION, MAX_DURATION)
             .setValue(50);
-
     private long shiftTapEndTime = 0L;
     private boolean moduleControllingSneak = false;
-
     private ShiftTap() {
         super("shifttap", "Shift Tap", ModuleCategory.UTILITIES);
-
         sneakDuration.setFullWidth(true);
         setup(generalSection, sneakDuration);
     }
-
     public static ShiftTap getInstance() {
         return INSTANCE;
     }
-
     @Override
     public String getDescription() {
         return "Automatically taps shift for short duration";
     }
-
     @Override
     public String getIcon() {
         return "shifttap.png";
     }
-
     @Override
     public float getIconSize() {
         return 21.0F;
     }
-
     @Override
     public boolean isServerAllowed() {
         return ServerUtil.isShiftTapSupported();
     }
-
     public void onTick() {
         MinecraftClient mc = MinecraftClient.getInstance();
-
         if (!isEnabled()) {
             stopShiftTap();
             return;
         }
-
         if (mc.player == null || mc.player.isSpectator() || !isWorldSupported()) {
             stopShiftTap();
             return;
         }
-
         if (moduleControllingSneak && System.currentTimeMillis() >= shiftTapEndTime) {
             stopShiftTap();
         }
     }
-
     public void triggerShiftTapIfPlayerTarget(net.minecraft.entity.Entity target, net.minecraft.entity.player.PlayerEntity attacker) {
         if (!(target instanceof net.minecraft.entity.player.PlayerEntity victim)
                 || victim.equals(attacker)) {
@@ -80,12 +63,9 @@ public final class ShiftTap extends Module {
         }
         triggerShiftTap();
     }
-
     public void triggerShiftTap() {
         MinecraftClient mc = MinecraftClient.getInstance();
-
         if (!isEnabled() || mc.player == null || !isWorldSupported()) {
-
             if (!isState()) {
                 return;
             }
@@ -107,7 +87,6 @@ public final class ShiftTap extends Module {
             }
             return;
         }
-
         shiftTapEndTime = System.currentTimeMillis() + sneakDuration.getInt();
         if (!moduleControllingSneak) {
             mc.options.sneakKey.setPressed(true);
@@ -115,7 +94,6 @@ public final class ShiftTap extends Module {
             LOGGER.info("Engaged sneak for {}ms", sneakDuration.getInt());
         }
     }
-
     private String phaze$blockReason(MinecraftClient mc) {
         if (mc.player == null) {
             return "not in a world";
@@ -131,23 +109,18 @@ public final class ShiftTap extends Module {
         }
         return "unknown";
     }
-
     public void stopShiftTap() {
         MinecraftClient mc = MinecraftClient.getInstance();
-
         if (!moduleControllingSneak) {
             return;
         }
-
         mc.options.sneakKey.setPressed(false);
         moduleControllingSneak = false;
         shiftTapEndTime = 0L;
     }
-
     private boolean isWorldSupported() {
         return ServerUtil.isShiftTapSupported();
     }
-
     protected void onDisable() {
         stopShiftTap();
     }

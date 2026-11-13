@@ -15,6 +15,7 @@ import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.RotationAxis;
 import org.joml.Matrix4f;
+import org.joml.Matrix3f;
 import org.joml.Vector3f;
 
 import java.io.ByteArrayInputStream;
@@ -40,6 +41,11 @@ final class BlockbenchWingModel {
     private final Bounds bounds;
     private final Map<String, List<Transform>> markerPaths;
     private final Vector3f attachmentPivot;
+    private final Map<List<Transform>, GroupPose> groupPaths = new HashMap<>();
+    private final Map<String, Vector3f> posedMarkers = new HashMap<>();
+    private final Matrix3f normalScratch = new Matrix3f();
+    private final boolean hasMembranes;
+    private long poseStamp;
 
     private BlockbenchWingModel(List<Cube> cubes, List<Texture> textures, Transform root,
                                 Map<String, List<Transform>> markerPaths) {
@@ -49,6 +55,28 @@ final class BlockbenchWingModel {
         this.bounds = calculateBounds(cubes);
         this.markerPaths = markerPaths;
         this.attachmentPivot = findAttachmentPivot(markerPaths, root);
+        Map<GroupKey, GroupPose> groups = new HashMap<>();
+        for (Cube cube : cubes) cacheGroupPath(cube.parents, groups);
+        for (Map.Entry<String, List<Transform>> marker : markerPaths.entrySet()) {
+            cacheGroupPath(marker.getValue(), groups);
+            if (!marker.getValue().isEmpty()) posedMarkers.put(marker.getKey(), new Vector3f());
+        }
+        this.hasMembranes = cubes.stream().anyMatch(cube -> cube.membrane);
+    }
+
+    private void cacheGroupPath(List<Transform> path, Map<GroupKey, GroupPose> groups) {
+        if (path.isEmpty() || groupPaths.containsKey(path)) return;
+        GroupPose parent = null;
+        for (Transform transform : path) {
+            GroupKey key = new GroupKey(parent, transform);
+            GroupPose pose = groups.get(key);
+            if (pose == null) {
+                pose = new GroupPose(parent, transform);
+                groups.put(key, pose);
+            }
+            parent = pose;
+        }
+        groupPaths.put(path, parent);
     }
 
     static BlockbenchWingModel load(Path file) throws IOException {
@@ -487,74 +515,105 @@ final class BlockbenchWingModel {
 
         MatrixStack.Entry uniformLightingEntry =
                 stableLightingEntry == null ? matrices.peek() : stableLightingEntry;
-        Map<String, Vector3f> markerPositions = markerPositions(physics, tipsOnlyPhysics);
-        for (Cube cube : cubes) {
-            if (targetTexture >= 0 && !cube.usesTexture(targetTexture)) continue;
-            if (cube.isMembrane() && !markerPositions.isEmpty()) {
-                String[] markerNames = MEMBRANE_MARKERS.get(
-                        cube.name.toLowerCase(java.util.Locale.ROOT)
-                );
-                if (markerNames != null) {
-                    cube.renderMembrane(
-                            matrices, consumers, textures, light,
-                            uniformLighting, uniformLightingEntry,
-                            markerPositions, markerNames
-                    );
-                    continue;
-                }
-            }
-            matrices.push();
-            for (Transform parent : cube.parents) {
-                parent.apply(matrices, physics, tipsOnlyPhysics);
-            }
-            matrices.translate(cube.ox * PIXEL, cube.oy * PIXEL, cube.oz * PIXEL);
-
-            matrices.multiply(RotationAxis.POSITIVE_Z.rotationDegrees(cube.rz));
-            matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(cube.ry));
-            matrices.multiply(RotationAxis.POSITIVE_X.rotationDegrees(cube.rx));
-            if (!cube.localMeshCoordinates) {
-                matrices.translate(
-                        -cube.ox * PIXEL,
-                        -cube.oy * PIXEL,
-                        -cube.oz * PIXEL
-                );
-            }
-            if (catalogLod) {
-                cube.renderCatalog(
-                        matrices, consumers, textures, light,
-                        uniformLighting, uniformLightingEntry, bounds.frontIsXAxis()
-                );
-            } else {
-                cube.render(
-                        matrices, consumers, textures, light,
-                        uniformLighting, uniformLightingEntry
-                );
-            }
-            matrices.pop();
+        poseStamp++;
+        Map<String, Vector3f> markers = hasMembranes ? markerPositions(physics, tipsOnlyPhysics) : Map.of();
+        // Immediate providers flush on layer changes; emit one texture at a time.
+        for (int texture = 0; texture < textures.size(); texture++) {
+            if (targetTexture >= 0 && texture != targetTexture) continue;
+            renderCubes(matrices, consumers, light, physics, uniformLighting, tipsOnlyPhysics,
+                    uniformLightingEntry, catalogLod, texture, markers);
         }
     }
 
-    private Map<String, Vector3f> markerPositions(
-            CosmeticsPhysics.Pose physics,
-            boolean tipsOnlyPhysics
-    ) {
+    private void renderCubes(MatrixStack matrices, VertexConsumerProvider consumers, int light,
+                             CosmeticsPhysics.Pose physics, boolean uniformLighting,
+                             boolean tipsOnlyPhysics, MatrixStack.Entry uniformLightingEntry,
+                             boolean catalogLod, int texture, Map<String, Vector3f> markers) {
+        for (Cube cube : cubes) {
+            if (!cube.usesTexture(texture)) continue;
+            int previousTexture = cube.activeTexture;
+            cube.activeTexture = texture;
+            try {
+                if (cube.membrane && !markers.isEmpty()) {
+                    String[] markerNames = MEMBRANE_MARKERS.get(cube.lowerName);
+                    if (markerNames != null) {
+                        cube.renderMembrane(matrices, consumers, textures, light,
+                                uniformLighting, uniformLightingEntry, markers, markerNames);
+                        continue;
+                    }
+                }
+                matrices.push();
+                try {
+                    MatrixStack.Entry entry = matrices.peek();
+                    GroupPose group = groupPaths.get(cube.parents);
+                    if (group != null) multiplyRigid(entry, group.matrix(physics, tipsOnlyPhysics, poseStamp));
+                    multiplyRigid(entry, cube.localTransform);
+                    if (catalogLod) {
+                        cube.renderCatalog(matrices, consumers, textures, light,
+                                uniformLighting, uniformLightingEntry, bounds.frontIsXAxis());
+                    } else {
+                        cube.render(matrices, consumers, textures, light, uniformLighting, uniformLightingEntry);
+                    }
+                } finally {
+                    matrices.pop();
+                }
+            } finally {
+                cube.activeTexture = previousTexture;
+            }
+        }
+    }
+
+    private void multiplyRigid(MatrixStack.Entry entry, Matrix4f transform) {
+        entry.getPositionMatrix().mul(transform);
+        entry.getNormalMatrix().mul(transform.get3x3(normalScratch));
+    }
+
+    private record GroupKey(GroupPose parent, Transform transform) { }
+
+    private static final class GroupPose {
+        private final GroupPose parent;
+        private final Transform transform;
+        private final Matrix4f pivotRotation = new Matrix4f();
+        private final Matrix4f chain = new Matrix4f();
+        private final float side;
+        private long stamp = Long.MIN_VALUE;
+
+        private GroupPose(GroupPose parent, Transform transform) {
+            this.parent = parent;
+            this.transform = transform;
+            pivotRotation.translation(transform.ox * PIXEL, transform.oy * PIXEL, transform.oz * PIXEL)
+                    .rotateZ((float) Math.toRadians(transform.rz))
+                    .rotateY((float) Math.toRadians(transform.ry))
+                    .rotateX((float) Math.toRadians(transform.rx));
+            side = transform.sideSign();
+        }
+
+        private Matrix4f matrix(CosmeticsPhysics.Pose physics, boolean tipsOnlyPhysics, long poseStamp) {
+            if (stamp == poseStamp) return chain;
+            if (parent == null) chain.set(pivotRotation);
+            else chain.set(parent.matrix(physics, tipsOnlyPhysics, poseStamp)).mul(pivotRotation);
+            float flex = transform.depthFlex(tipsOnlyPhysics);
+            if (flex != 0.0F) {
+                chain.rotateY((float) Math.toRadians(physics.segmentYaw() * flex * side));
+                chain.rotateX((float) Math.toRadians(physics.segmentPitch() * flex));
+            }
+            chain.translate(-transform.ox * PIXEL, -transform.oy * PIXEL, -transform.oz * PIXEL);
+            stamp = poseStamp;
+            return chain;
+        }
+    }
+
+    private Map<String, Vector3f> markerPositions(CosmeticsPhysics.Pose physics, boolean tipsOnlyPhysics) {
         if (markerPaths.isEmpty()) return Map.of();
-        Map<String, Vector3f> result = new HashMap<>();
         for (Map.Entry<String, List<Transform>> entry : markerPaths.entrySet()) {
             List<Transform> path = entry.getValue();
             if (path.isEmpty()) continue;
-            Matrix4f matrix = new Matrix4f();
-            for (Transform transform : path) {
-                transform.apply(matrix, physics, tipsOnlyPhysics);
-            }
+            Matrix4f matrix = groupPaths.get(path).matrix(physics, tipsOnlyPhysics, poseStamp);
             Transform marker = path.getLast();
-            result.put(entry.getKey(), matrix.transformPosition(new Vector3f(
-                    marker.ox * PIXEL,
-                    marker.oy * PIXEL,
-                    marker.oz * PIXEL
-            )));
+            matrix.transformPosition(posedMarkers.get(entry.getKey()).set(
+                    marker.ox * PIXEL, marker.oy * PIXEL, marker.oz * PIXEL));
         }
-        return result;
+        return posedMarkers;
     }
 
     private static final Map<String, String[]> MEMBRANE_MARKERS = Map.ofEntries(
@@ -905,6 +964,11 @@ final class BlockbenchWingModel {
 
     private static final class Cube {
         private final String name;
+        private final String lowerName;
+        private final boolean membrane;
+        private final Matrix4f localTransform;
+        private final Set<Integer> textureIndices;
+        private int activeTexture = -1;
         private final float x1, y1, z1, x2, y2, z2, ox, oy, oz, rx, ry, rz;
         private final Map<String, Face> faces;
         private final List<MeshFace> meshFaces;
@@ -917,6 +981,8 @@ final class BlockbenchWingModel {
                      Map<String, Face> faces, List<MeshFace> meshFaces,
                      boolean localMeshCoordinates) {
             this.name = name;
+            this.lowerName = name.toLowerCase(java.util.Locale.ROOT);
+            this.membrane = lowerName.contains("membrane");
             this.x1 = x1; this.y1 = y1; this.z1 = z1;
             this.x2 = x2; this.y2 = y2; this.z2 = z2;
             this.ox = ox; this.oy = oy; this.oz = oz;
@@ -924,6 +990,16 @@ final class BlockbenchWingModel {
             this.faces = faces;
             this.meshFaces = meshFaces;
             this.localMeshCoordinates = localMeshCoordinates;
+            this.localTransform = new Matrix4f()
+                    .translation(ox * PIXEL, oy * PIXEL, oz * PIXEL)
+                    .rotateZ((float) Math.toRadians(rz))
+                    .rotateY((float) Math.toRadians(ry))
+                    .rotateX((float) Math.toRadians(rx));
+            if (!localMeshCoordinates) localTransform.translate(-ox * PIXEL, -oy * PIXEL, -oz * PIXEL);
+            Set<Integer> indices = new HashSet<>();
+            for (Face face : faces.values()) indices.add(face.textureIndex);
+            for (MeshFace face : meshFaces) indices.add(face.textureIndex);
+            this.textureIndices = Set.copyOf(indices);
         }
 
         static Cube read(
@@ -1109,18 +1185,8 @@ final class BlockbenchWingModel {
             return (float) Math.atan2(offset.dot(axisV), offset.dot(axisU));
         }
 
-        boolean isMembrane() {
-            return name.toLowerCase(java.util.Locale.ROOT).contains("membrane");
-        }
-
         boolean usesTexture(int textureIndex) {
-            for (Face face : faces.values()) {
-                if (face.textureIndex == textureIndex) return true;
-            }
-            for (MeshFace face : meshFaces) {
-                if (face.textureIndex == textureIndex) return true;
-            }
-            return false;
+            return textureIndices.contains(textureIndex);
         }
 
         void renderMembrane(
@@ -1171,7 +1237,8 @@ final class BlockbenchWingModel {
                 float nx, float ny, float nz
         ) {
             Face face = faces.get(side);
-            if (face == null || face.textureIndex >= textures.size()) return;
+            if (face == null || face.textureIndex < 0 || face.textureIndex >= textures.size()
+                    || (activeTexture >= 0 && face.textureIndex != activeTexture)) return;
             Texture texture = textures.get(face.textureIndex);
             if (texture.id == null) return;
             float u0 = face.uv[0] / texture.width;
@@ -1227,7 +1294,8 @@ final class BlockbenchWingModel {
         ) {
             Matrix4f matrix = matrices.peek().getPositionMatrix();
             for (MeshFace face : meshFaces) {
-                if (face.textureIndex < 0 || face.textureIndex >= textures.size()) continue;
+                if (face.textureIndex < 0 || face.textureIndex >= textures.size()
+                        || (activeTexture >= 0 && face.textureIndex != activeTexture)) continue;
                 Texture texture = textures.get(face.textureIndex);
                 if (texture.id == null || face.vertices.size() < 3) continue;
                 MeshVertex a = face.vertices.get(0);
@@ -1236,16 +1304,7 @@ final class BlockbenchWingModel {
                 MeshVertex d = face.vertices.size() >= 4
                         ? face.vertices.get(3)
                         : c;
-                Vector3f normal = new Vector3f(
-                        b.x - a.x, b.y - a.y, b.z - a.z
-                ).cross(new Vector3f(
-                        c.x - a.x, c.y - a.y, c.z - a.z
-                ));
-                if (normal.lengthSquared() < 1.0E-8F) {
-                    normal.set(0.0F, 0.0F, 1.0F);
-                } else {
-                    normal.normalize();
-                }
+                Vector3f normal = face.normal;
                 VertexConsumer out = consumers.getBuffer(
                         net.minecraft.client.render.RenderLayers.entityTranslucent(texture.id)
                 );
@@ -1286,7 +1345,8 @@ final class BlockbenchWingModel {
                               float cx, float cy, float cz, float dx, float dy, float dz,
                               float nx, float ny, float nz) {
             Face face = faces.get(side);
-            if (face == null || face.textureIndex >= textures.size()) return;
+            if (face == null || face.textureIndex < 0 || face.textureIndex >= textures.size()
+                    || (activeTexture >= 0 && face.textureIndex != activeTexture)) return;
             Texture texture = textures.get(face.textureIndex);
             if (texture.id == null) return;
             float u0 = face.uv[0] / texture.width;
@@ -1340,7 +1400,19 @@ final class BlockbenchWingModel {
 
     private record MeshVertex(float x, float y, float z, float u, float v) { }
 
-    private record MeshFace(int textureIndex, List<MeshVertex> vertices) { }
+    private record MeshFace(int textureIndex, List<MeshVertex> vertices, Vector3f normal) {
+        private MeshFace(int textureIndex, List<MeshVertex> vertices) {
+            this(textureIndex, vertices, meshNormal(vertices));
+        }
+
+        private static Vector3f meshNormal(List<MeshVertex> vertices) {
+            if (vertices.size() < 3) return new Vector3f(0.0F, 0.0F, 1.0F);
+            MeshVertex a = vertices.get(0), b = vertices.get(1), c = vertices.get(2);
+            Vector3f normal = new Vector3f(b.x - a.x, b.y - a.y, b.z - a.z)
+                    .cross(c.x - a.x, c.y - a.y, c.z - a.z);
+            return normal.lengthSquared() < 1.0E-8F ? normal.set(0.0F, 0.0F, 1.0F) : normal.normalize();
+        }
+    }
 
     private record Transform(
             String uuid,

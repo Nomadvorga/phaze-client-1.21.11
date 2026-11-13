@@ -1,5 +1,4 @@
 package vorga.phazeclient.implement.features.modules.other;
-
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.ItemStack;
 import net.minecraft.text.MutableText;
@@ -11,58 +10,47 @@ import vorga.phazeclient.api.feature.module.ModuleCategory;
 import vorga.phazeclient.api.feature.module.setting.implement.BooleanSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.SectionSetting;
 import vorga.phazeclient.base.util.PhazeAnnouncements;
-
 public final class ItemPickupLogger extends Module {
     private static final ItemPickupLogger INSTANCE = new ItemPickupLogger();
-
     public final SectionSetting filterSection = new SectionSetting("Filter");
     public final BooleanSetting onlyRare = new BooleanSetting(
             "Only Rare",
             "Log only items that are not COMMON rarity (uncommon/rare/epic)"
     ).setValue(false);
-
     private ItemPickupLogger() {
         super("item_pickup_logger", "Item Pickup Logger", ModuleCategory.UTILITIES);
         onlyRare.setFullWidth(true);
         setup(filterSection, onlyRare);
     }
-
     public static ItemPickupLogger getInstance() {
         return INSTANCE;
     }
-
     @Override
     public String getDescription() {
         return "Logs every picked-up item to the chat";
     }
-
     @Override
     public String getIcon() {
         return "item_pickup_logger.png";
     }
-
     @Override
     public float getIconSize() {
         return 21.0F;
     }
-
     public void onPickup(ItemStack stack, int amount) {
         if (!isEnabled() || stack == null || stack.isEmpty()) {
             return;
         }
-
         if (onlyRare.isValue()) {
             Rarity rarity = stack.getRarity();
             if (rarity == null || rarity == Rarity.COMMON) {
                 return;
             }
         }
-
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc == null || mc.inGameHud == null) {
             return;
         }
-
         MutableText itemName = stack.getName().copy();
         int count = amount;
         mc.execute(() -> {

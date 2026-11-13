@@ -3,18 +3,15 @@ package vorga.phazeclient.implement.menu.components.implement.settings;
 import org.joml.Matrix3x2fStack;
 
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.util.math.MatrixStack;
-import vorga.phazeclient.base.util.render.GuiMatrix;
 import vorga.phazeclient.api.feature.module.setting.implement.MultiColorSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.ColorSetting;
-import vorga.phazeclient.api.system.font.Fonts;
+import vorga.phazeclient.implement.menu.font.GuiFonts;
 import vorga.phazeclient.api.system.shape.ShapeProperties;
 import vorga.phazeclient.base.util.math.MathUtil;
-import vorga.phazeclient.base.util.other.StringUtil;
 import vorga.phazeclient.implement.menu.MenuScreen;
 import vorga.phazeclient.implement.menu.MenuStyle;
 import vorga.phazeclient.implement.menu.components.implement.window.AbstractWindow;
-import vorga.phazeclient.implement.menu.components.implement.window.implement.settings.color.ColorWindow;
+import vorga.phazeclient.implement.menu.components.implement.window.implement.settings.color.SettingColorPickerWindow;
 
 import static vorga.phazeclient.api.system.font.Fonts.Type.*;
 
@@ -29,7 +26,7 @@ public class MultiColorComponent extends AbstractSettingComponent {
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         updateVisibilityAnimation();
-        var labelFont = Fonts.getSize(14, INTER_BOLD);
+        var labelFont = GuiFonts.getSize(14, INTER_BOLD);
 
         boolean isModified = setting.isModified();
         float textOffset = animatedTextOffset(isModified);
@@ -40,20 +37,19 @@ public class MultiColorComponent extends AbstractSettingComponent {
 
         Matrix3x2fStack matrix = context.getMatrices();
 
-        MatrixStack textPose = new MatrixStack();
-        textPose.multiplyPositionMatrix(GuiMatrix.mat4(matrix));
-
         int colorCount = setting.getColorCount();
-        String wrapped = StringUtil.wrap(setting.getLocalizedName(), (int) (width - colorCount * 9 - 18 - textOffset), 14);
-        float wrappedHeight = Fonts.getSize(14).getStringHeight(wrapped);
-        height = (int) (20 + Math.max(0, (wrappedHeight - 14) / 2));
+        height = ROW_HEIGHT;
         float hoverProgress = animatedCardHover(MathUtil.isHovered(mouseX, mouseY, x, y, width, height));
 
         resetIcon.position(x, y, height).alpha(currentAlpha).modified(isModified).render(context);
         renderSettingCard(context, 0.0f, hoverProgress);
 
         float textX = x + 10 + textOffset;
-        labelFont.drawString(textPose, wrapped, textX, centeredTextY(labelFont, wrapped), primaryText());
+        String text = label.singleLine(setting.getLocalizedName());
+        float firstColorX = x + width - 15.5F - Math.max(0, colorCount - 1) * 9.0F;
+        label.render(matrix, labelFont, text, textX, centeredTextY(labelFont, text),
+                firstColorX - 8.0F, y, height, primaryText());
+        updateLabelHover(mouseX, mouseY);
 
         for (int i = 0; i < colorCount; i++) {
             ColorSetting colorSetting = setting.getColor(i);
@@ -103,7 +99,7 @@ public class MultiColorComponent extends AbstractSettingComponent {
                         AbstractWindow existingWindow = null;
 
                         for (AbstractWindow window : windowManager.getWindows()) {
-                            if (window instanceof ColorWindow) {
+                            if (window instanceof SettingColorPickerWindow) {
                                 existingWindow = window;
                                 break;
                             }
@@ -113,8 +109,8 @@ public class MultiColorComponent extends AbstractSettingComponent {
                             windowManager.delete(existingWindow);
                         } else {
 
-                            int windowWidth = 178;
-                            int windowHeight = 165;
+                            int windowWidth = Math.round(SettingColorPickerWindow.WINDOW_WIDTH);
+                            int windowHeight = Math.round(SettingColorPickerWindow.getWindowHeight(selectedColor));
 
                             int windowX = (int) (mouseX + 10);
                             int windowY = (int) (mouseY + 10);
@@ -122,10 +118,10 @@ public class MultiColorComponent extends AbstractSettingComponent {
                             windowX = MenuScreen.INSTANCE.clampOverlayX(windowX, windowWidth);
                             windowY = MenuScreen.INSTANCE.clampOverlayY(windowY, windowHeight);
 
-                            AbstractWindow colorWindow = new ColorWindow(selectedColor)
+                            AbstractWindow colorWindow = new SettingColorPickerWindow(selectedColor)
                                     .position(windowX, windowY)
                                     .size(windowWidth, windowHeight)
-                                    .draggable(true);
+                                    .draggable(false);
 
                             windowManager.add(colorWindow);
                         }

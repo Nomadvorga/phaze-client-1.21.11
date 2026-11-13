@@ -1,14 +1,11 @@
 package vorga.phazeclient.base.util;
-
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import net.minecraft.client.MinecraftClient;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -27,12 +24,11 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-
 public final class RemoteRulesService {
-
     private static final Logger LOG = LoggerFactory.getLogger("PhazeRules");
     private static final Set<String> OFFLINE_FALLBACK_HIDDEN_MODULES = Set.of(
             "auc_helper",
@@ -47,61 +43,48 @@ public final class RemoteRulesService {
             "fast_swap",
             "shifttap"
     );
-
     private static final String DEFAULT_API_BASE = "https://phazeclient.ru";
-
     private static final long HEARTBEAT_SECONDS = 600L;
-
     private static final long REFRESH_INTERVAL_SECONDS = 600L;
     private static final long LOCKDOWN_AFTER_MS = 20L * 60L * 1000L;
     private static final long STARTUP_GRACE_MS = 45_000L;
-
+    private static final long RETRY_MIN_MS = 3_000L;
+    private static final long RETRY_MAX_MS = 60_000L;
     private static final int CONNECT_TIMEOUT_MS = 15_000;
     private static final int READ_TIMEOUT_MS = 30_000;
-
     static {
-
         System.setProperty("java.net.preferIPv4Stack", "true");
         System.setProperty("java.net.preferIPv6Addresses", "false");
     }
-
     private static final class Holder {
         static final RemoteRulesService INSTANCE = new RemoteRulesService();
     }
-
     public static RemoteRulesService getInstance() {
         return Holder.INSTANCE;
     }
-
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "phaze-rules-poll");
                 t.setDaemon(true);
                 return t;
             });
-
     private final AtomicBoolean started = new AtomicBoolean(false);
     private final AtomicBoolean refreshInFlight = new AtomicBoolean(false);
-
+    private final AtomicBoolean retryScheduled = new AtomicBoolean(false);
+    private volatile long retryDelayMs = RETRY_MIN_MS;
     private final AtomicBoolean manifestUploaded = new AtomicBoolean(false);
-
     private final String apiBase;
     private final boolean enabled;
     private final String clientId;
-
     private volatile Set<String> blocked = Collections.emptySet();
-
     private volatile Set<String> allowed = Collections.emptySet();
     private volatile String lastHost = null;
     private volatile String rulesHost = null;
     private volatile long lastRefreshMs = 0L;
     private volatile long lastSuccessfulFetchMs = 0L;
     private final long serviceStartMs = System.currentTimeMillis();
-
     private volatile int onlineCount = -1;
-
     private RemoteRulesService() {
         String configured = System.getProperty("phaze.rules.api", DEFAULT_API_BASE);
-
         while (configured.endsWith("/")) {
             configured = configured.substring(0, configured.length() - 1);
         }
@@ -109,28 +92,22 @@ public final class RemoteRulesService {
         this.enabled = !configured.isEmpty();
         this.clientId = loadOrCreateClientId();
     }
-
     public int getOnlineCount() {
         return onlineCount;
     }
-
     public boolean isKnownClientUser(String username) {
         return PhazePlayerPresence.getInstance().isKnownUser(username);
     }
-
     public String getClientId() {
         return clientId;
     }
-
     public String getApiBase() {
         return apiBase;
     }
-
     public boolean isModuleExplicitlyAllowed(String moduleId) {
         if (moduleId == null || moduleId.isEmpty()) {
             return false;
         }
-
         if (isRulesApiUnavailableNow()) {
             return false;
         }
@@ -140,7 +117,6 @@ public final class RemoteRulesService {
         }
         return allowed.contains(moduleId.toLowerCase());
     }
-
     private String getCurrentUsername() {
         try {
             MinecraftClient client = MinecraftClient.getInstance();
@@ -151,7 +127,6 @@ public final class RemoteRulesService {
             return null;
         }
     }
-
     private String loadOrCreateClientId() {
         try {
             MinecraftClient client = MinecraftClient.getInstance();
@@ -159,34 +134,30 @@ public final class RemoteRulesService {
                     ? client.runDirectory.toPath()
                     : Path.of(".");
             Path file = runDir.resolve("Phaze").resolve("files").resolve("client_id");
-
             if (Files.exists(file)) {
                 String existing = Files.readString(file, StandardCharsets.UTF_8).trim();
-
                 try {
                     UUID parsed = UUID.fromString(existing);
                     return parsed.toString();
                 } catch (IllegalArgumentException badShape) {
-
                 }
             }
-
             String fresh = UUID.randomUUID().toString();
             try {
                 Files.createDirectories(file.getParent());
                 Files.writeString(file, fresh, StandardCharsets.UTF_8);
             } catch (IOException writeFailed) {
-
                 LOG.warn("could not persist client id: {}", writeFailed.toString());
             }
             return fresh;
         } catch (Throwable t) {
-
             LOG.warn("client id init failed, using ephemeral id: {}", t.toString());
             return UUID.randomUUID().toString();
         }
     }
-
+    public void stop() {
+        scheduler.shutdownNow();
+    }
     public void start() {
         if (!enabled) {
             return;
@@ -194,24 +165,20 @@ public final class RemoteRulesService {
         if (!started.compareAndSet(false, true)) {
             return;
         }
-
         scheduler.scheduleWithFixedDelay(
                 this::heartbeat,
                   0L,
                   HEARTBEAT_SECONDS,
                 TimeUnit.SECONDS
         );
-
         PhazeEventService.getInstance().start();
     }
-
     public boolean isModuleBlocked(String moduleId) {
         if (moduleId == null || moduleId.isEmpty()) {
             return false;
         }
         String normalized = moduleId.toLowerCase();
         String currentHost = ServerUtil.getCurrentServerHost();
-
         if (rulesHost == null || !rulesHost.equals(currentHost)) {
             if (ServerUtil.hasMirroredModuleRule(normalized)) {
                 return !ServerUtil.isModuleAllowedByMirroredRules(normalized);
@@ -229,7 +196,6 @@ public final class RemoteRulesService {
         }
         return blocked.contains(moduleId.toLowerCase());
     }
-
     public boolean shouldUseOfflineModuleFallback() {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc != null && mc.isInSingleplayer()) {
@@ -237,7 +203,6 @@ public final class RemoteRulesService {
         }
         return isRulesApiUnavailableNow();
     }
-
     public boolean shouldHideModuleWhenOffline(String moduleId) {
         if (moduleId == null || moduleId.isEmpty()) {
             return false;
@@ -251,14 +216,11 @@ public final class RemoteRulesService {
         }
         return OFFLINE_FALLBACK_HIDDEN_MODULES.contains(normalized);
     }
-
     private boolean isStrictLockdownNow() {
         String host = ServerUtil.getCurrentServerHost();
         if (host == null || host.isEmpty()) return false;
-
         return isRulesApiUnavailableNow();
     }
-
     private boolean isRulesApiUnavailableNow() {
         if (!enabled) {
             return true;
@@ -268,11 +230,9 @@ public final class RemoteRulesService {
         if (lastSuccessfulFetchMs <= 0L) return true;
         return (now - lastSuccessfulFetchMs) > LOCKDOWN_AFTER_MS;
     }
-
     public Set<String> getBlockedModuleIds() {
         return blocked;
     }
-
     public void requestRefresh() {
         if (!enabled || !started.get()) {
             return;
@@ -281,13 +241,11 @@ public final class RemoteRulesService {
         if (host == null) {
             host = "";
         }
-
         lastHost = host;
         lastRefreshMs = 0L;
         String requestedHost = host;
         scheduler.execute(() -> fetchAsync(requestedHost, true));
     }
-
     private static Set<String> readModuleIds(JsonObject obj, String field) {
         Set<String> out = new HashSet<>();
         if (obj.has(field) && obj.get(field).isJsonArray()) {
@@ -300,32 +258,23 @@ public final class RemoteRulesService {
         }
         return out;
     }
-
     private void heartbeat() {
         try {
             String host = ServerUtil.getCurrentServerHost();
-
             if (host == null) host = "";
-
             boolean hostChanged = !host.equals(lastHost);
             long now = System.currentTimeMillis();
             boolean stale = (now - lastRefreshMs) >= REFRESH_INTERVAL_SECONDS * 1000L;
-
             if (hostChanged) {
-
                 lastHost = host;
-
                 fetchAsync(host, true);
             } else if (stale) {
-
                 fetchAsync(host, false);
             }
         } catch (Throwable t) {
             LOG.warn("heartbeat failed", t);
-
         }
     }
-
     private void fetchAsync(String host, boolean bypassCache) {
         if (!refreshInFlight.compareAndSet(false, true)) {
             return;
@@ -334,15 +283,29 @@ public final class RemoteRulesService {
             try {
                 fetch(host, bypassCache);
             } catch (Throwable t) {
-                LOG.warn("fetch failed for host='{}': {}", host, t.toString());
-
+                LOG.warn("rules fetch from {} failed (minecraft server='{}'): {}", apiBase, host, t.toString());
                 lastRefreshMs = 0L;
+                scheduleRetry();
             } finally {
                 refreshInFlight.set(false);
             }
         });
     }
-
+    private void scheduleRetry() {
+        if (!retryScheduled.compareAndSet(false, true)) {
+            return;
+        }
+        long delay = retryDelayMs;
+        retryDelayMs = Math.min(RETRY_MAX_MS, delay * 2L);
+        try {
+            scheduler.schedule(() -> {
+                retryScheduled.set(false);
+                heartbeat();
+            }, delay, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException shutDown) {
+            retryScheduled.set(false);
+        }
+    }
     private void fetch(String host, boolean bypassCache) throws Exception {
         String encodedHost = URLEncoder.encode(host == null ? "" : host, StandardCharsets.UTF_8);
         String encodedClient = URLEncoder.encode(clientId, StandardCharsets.UTF_8);
@@ -350,7 +313,6 @@ public final class RemoteRulesService {
                 getCurrentUsername() == null ? "" : getCurrentUsername(),
                 StandardCharsets.UTF_8);
         String encodedFresh = bypassCache ? "&fresh=1" : "";
-
         URI uri = URI.create(
                 apiBase
                         + "/api/module-rules?host="
@@ -360,7 +322,6 @@ public final class RemoteRulesService {
                         + "&username="
                         + encodedUsername
                         + encodedFresh);
-
         URL url = uri.toURL();
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         String body;
@@ -374,20 +335,16 @@ public final class RemoteRulesService {
                 conn.setRequestProperty("Cache-Control", "no-cache, no-store, max-age=0");
                 conn.setRequestProperty("Pragma", "no-cache");
             }
-
             conn.setRequestProperty(
                     "User-Agent",
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     + "AppleWebKit/537.36 (KHTML, like Gecko) "
                     + "Chrome/126.0.0.0 Safari/537.36");
             conn.setInstanceFollowRedirects(true);
-
             status = conn.getResponseCode();
             if (status != 200) {
-                LOG.warn("fetch '{}' returned status {}", uri, status);
-                return;
+                throw new IOException("HTTP " + status);
             }
-
             InputStream in = conn.getInputStream();
             StringBuilder sb = new StringBuilder();
             try (BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
@@ -399,31 +356,25 @@ public final class RemoteRulesService {
         } finally {
             conn.disconnect();
         }
-
+        retryDelayMs = RETRY_MIN_MS;
         JsonElement parsed = JsonParser.parseString(body);
         if (!parsed.isJsonObject()) return;
         JsonObject obj = parsed.getAsJsonObject();
-
         Set<String> next = readModuleIds(obj, "blocked");
         Set<String> nextAllowed = readModuleIds(obj, "allowed");
-
         if (obj.has("online") && obj.get("online").isJsonPrimitive()) {
             try {
                 onlineCount = obj.get("online").getAsInt();
             } catch (Exception ignored) {
-
             }
         }
-
         PhazeAnnouncements.acceptAll(obj.get("announcements"));
-
         PhazePlayerPresence.getInstance().refreshFromRulesPayload(
                 obj,
                 apiBase,
                 CONNECT_TIMEOUT_MS,
                 READ_TIMEOUT_MS
         );
-
         if (host == null ? lastHost == null : host.equals(lastHost)) {
             blocked = Collections.unmodifiableSet(next);
             allowed = Collections.unmodifiableSet(nextAllowed);
@@ -431,18 +382,17 @@ public final class RemoteRulesService {
             lastRefreshMs = System.currentTimeMillis();
             lastSuccessfulFetchMs = lastRefreshMs;
         }
-
         if (manifestUploaded.compareAndSet(false, true)) {
             try {
                 pushManifest();
+            } catch (ManifestRejectedException rejected) {
+                LOG.warn("manifest upload rejected: {}", rejected.getMessage());
             } catch (Throwable t) {
-
                 manifestUploaded.set(false);
                 LOG.warn("manifest upload failed: {}", t.toString());
             }
         }
     }
-
     private void pushManifest() throws IOException {
         byte[] manifestBytes;
         String signature;
@@ -459,12 +409,10 @@ public final class RemoteRulesService {
         if (manifestBytes.length == 0 || signature.isEmpty()) {
             throw new IOException("signed module manifest is empty");
         }
-
         JsonObject body = new JsonObject();
         body.addProperty("clientId", clientId);
         body.addProperty("payload", Base64.getEncoder().encodeToString(manifestBytes));
         body.addProperty("signature", signature);
-
         URI uri = URI.create(apiBase + "/api/manifest");
         HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
         try {
@@ -473,7 +421,6 @@ public final class RemoteRulesService {
             conn.setReadTimeout(READ_TIMEOUT_MS);
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setRequestProperty("Accept", "application/json");
-
             conn.setRequestProperty(
                     "User-Agent",
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -481,20 +428,24 @@ public final class RemoteRulesService {
                     + "Chrome/126.0.0.0 Safari/537.36");
             conn.setDoOutput(true);
             conn.setInstanceFollowRedirects(true);
-
             byte[] payload = body.toString().getBytes(StandardCharsets.UTF_8);
             try (OutputStream out = conn.getOutputStream()) {
                 out.write(payload);
             }
-
             int status = conn.getResponseCode();
+            if (status >= 400 && status < 500 && status != 408 && status != 429) {
+                throw new ManifestRejectedException("manifest POST returned " + status);
+            }
             if (status != 204 && status != 200) {
-
                 throw new IOException("manifest POST returned " + status);
             }
         } finally {
             conn.disconnect();
         }
     }
-
+    private static final class ManifestRejectedException extends IOException {
+        ManifestRejectedException(String message) {
+            super(message);
+        }
+    }
 }

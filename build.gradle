@@ -1,6 +1,6 @@
 
 plugins {
-    id 'fabric-loom' version '1.14.10'
+    id 'fabric-loom' version "${loom_version}"
     id 'maven-publish'
 }
 
@@ -36,6 +36,11 @@ dependencies {
     mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    // Opt-in isolated compatibility smoke runs; never bundle or install these jars.
+    if (project.hasProperty('portCompatMods')) {
+        modRuntimeOnly fileTree(dir: project.property('portCompatMods'), include: ['*.jar'])
+    }
 
     // Compile-only: optional renderer integration. Nothing from Sodium is
     // bundled into Phaze; PhazeMixinPlugin loads these mixins only when the
@@ -75,6 +80,245 @@ processResources {
     }
 }
 
+tasks.register('verifySignedModuleManifest', Exec) {
+    group = 'verification'
+    description = 'Checks the signed module catalog against the registered modules'
+    inputs.file('src/main/resources/phaze/module-manifest.json')
+    inputs.file('src/main/resources/phaze/module-manifest.sig')
+    inputs.file('security/manifest-ed25519-public.pem')
+    inputs.file('src/main/java/vorga/phazeclient/core/Main.java')
+    inputs.dir('src/main/java/vorga/phazeclient/implement/features/modules')
+    commandLine 'node', 'scripts/module-manifest.mjs', 'verify'
+}
+tasks.named('processResources') { dependsOn 'verifySignedModuleManifest' }
+
+tasks.register('verifyPortAssets', Exec) {
+    group = 'verification'
+    description = 'Validates packaged JSON, sound files and UI-only texture filtering'
+    commandLine 'node', 'scripts/verify-port-assets.mjs'
+}
+tasks.named('check') { dependsOn 'verifyPortAssets' }
+
+sourceSets.test.java.srcDir('scripts')
+
+// Dedicated GL runs select their fixtures without changing the normal client suite.
+// The filtered file is a test resource only; the production jar uses src/main/resources.
+tasks.named('processTestResources') {
+    def blurOnly = project.hasProperty('hudBlurOnly')
+    def textureFilterOnly = project.hasProperty('textureFilterOnly')
+    def hudEditorOnly = project.hasProperty('hudEditorOnly')
+    def bossBarOnly = project.hasProperty('bossBarOnly')
+    def guiBenchOnly = project.hasProperty('guiBenchOnly')
+    def guiBenchWorld = project.hasProperty('guiBenchWorld')
+    def paperDollOnly = project.hasProperty('paperDollOnly')
+    inputs.property 'guiBenchWorld', guiBenchWorld
+    inputs.property 'paperDollOnly', paperDollOnly
+    inputs.property 'hudBlurOnly', blurOnly
+    inputs.property 'textureFilterOnly', textureFilterOnly
+    inputs.property 'hudEditorOnly', hudEditorOnly
+    inputs.property 'bossBarOnly', bossBarOnly
+    inputs.property 'guiBenchOnly', guiBenchOnly
+    if (blurOnly || textureFilterOnly || hudEditorOnly || bossBarOnly || guiBenchOnly || paperDollOnly) {
+        def selected = guiBenchOnly ? [guiBenchWorld ? 'GuiWorldBenchmarkClientTest' : 'GuiRenderBenchmarkClientTest']
+                : paperDollOnly ? ['PaperDollClientTest']
+                : hudEditorOnly
+                ? ['HudEditorClientTest', 'HudCachedReplayClientTest', 'RenderSafetyClientTest']
+                : bossBarOnly ? ['BossBarClientTest']
+                : textureFilterOnly ? ['TextureFilteringClientTest', 'LoadingOverlayClientTest', 'RenderSafetyClientTest']
+                : ['HudCachedReplayClientTest', 'RenderSafetyClientTest', 'HudBlurClientTest']
+        filesMatching('fabric.mod.json') {
+            filter { String line ->
+                if (line.contains('"vorga.')) {
+                    if (!selected.any { line.contains(it) }) return null
+                    if (line.contains(selected.last())) return line.replaceFirst(/,\s*$/, '')
+                }
+                return line
+            }
+        }
+    } else {
+        filesMatching('fabric.mod.json') {
+            filter { String line -> line.contains('BenchmarkClientTest') ? null : line }
+        }
+    }
+}
+
+tasks.register('verifyPackPreviewAssetLogic', JavaExec) {
+    group = 'verification'
+    description = 'Checks deterministic preview selection and straight-alpha composition without a game'
+    dependsOn 'testClasses'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'vorga.phazeclient.implement.features.modules.other.PackPreviewAssetLogicTest'
+    args file('src/main/java/vorga/phazeclient/implement/features/modules/other/PackPreviewAssets.java').absolutePath
+}
+tasks.named('check') { dependsOn 'verifyPackPreviewAssetLogic' }
+
+sourceSets {
+    portVerification {
+        compileClasspath += sourceSets.main.output + configurations.testRuntimeClasspath + configurations.compileClasspath
+        runtimeClasspath += output + compileClasspath
+    }
+    portSmoke {
+        compileClasspath += sourceSets.main.output + configurations.testRuntimeClasspath
+        runtimeClasspath += output + compileClasspath
+    }
+}
+
+tasks.register('verifyMixinTargets', JavaExec) {
+    group = 'verification'
+    description = 'Checks registered mixin members and injection selectors against 1.21.11 bytecode'
+    dependsOn 'portVerificationClasses', 'classes'
+    classpath = sourceSets.portVerification.runtimeClasspath
+    if (project.hasProperty('portOptionalClasspath')) {
+        classpath += fileTree(dir: project.property('portOptionalClasspath'), include: ['*.jar'])
+    }
+    mainClass = 'vorga.phazeclient.test.MixinTargetChecks'
+    def mappingsFile = new File(gradle.gradleUserHomeDir,
+            "caches/fabric-loom/${project.minecraft_version}/net.fabricmc.yarn.${project.minecraft_version.replace('.', '_')}.${project.yarn_mappings}-v2/mappings.tiny")
+    systemProperty 'phaze.port.mappings', mappingsFile.absolutePath
+}
+tasks.named('check') { dependsOn 'verifyMixinTargets' }
+
+// src/test is the verify* JavaExec suite, not JUnit. Gradle 9 fails `test` when it
+// discovers none; those JavaExec tasks are already required by `check`.
+tasks.named('test') {
+    failOnNoDiscoveredTests = false
+}
+
+// Keep standalone checks isolated from the player's config, identity and cache.
+fileTree('src/test/java').matching { include '**/*Checks.java'; exclude '**/HeadlessMinecraftChecks.java' }.each { checkFile ->
+    def relative = file('src/test/java').toPath().relativize(checkFile.toPath()).toString()
+    def mainName = relative.replace(File.separator, '.').replaceAll(/\.java$/, '')
+    def taskName = 'verify' + checkFile.name.replaceFirst(/Checks\.java$/, '')
+    tasks.register(taskName, JavaExec) {
+        group = 'verification'
+        dependsOn 'testClasses'
+        classpath = sourceSets.test.runtimeClasspath
+        mainClass = 'vorga.phazeclient.test.HeadlessMinecraftChecks'
+        args mainName
+        def sandbox = layout.buildDirectory.dir("regression/${taskName}").get().asFile
+        // Source/asset checks deliberately inspect repository-relative paths.
+        environment 'APPDATA', sandbox.absolutePath
+        systemProperty 'user.home', sandbox.absolutePath
+        doFirst { sandbox.mkdirs() }
+    }
+    tasks.named('check') { dependsOn taskName }
+}
+
+tasks.register('benchmarkPredictionCpu', JavaExec) {
+    group = 'verification'
+    description = 'Optional CPU-only prediction comparison; not an in-game FPS/GPU benchmark'
+    dependsOn 'testClasses'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'vorga.phazeclient.test.HeadlessMinecraftChecks'
+    args 'vorga.phazeclient.implement.features.modules.other.PredictionPerformanceBench'
+    if (project.hasProperty('predictionBaseline')) {
+        systemProperty 'phaze.prediction.baseline', project.property('predictionBaseline')
+    }
+    def sandbox = layout.buildDirectory.dir('regression/benchmarkPredictionCpu').get().asFile
+    environment 'APPDATA', sandbox.absolutePath
+    systemProperty 'user.home', sandbox.absolutePath
+    doFirst { sandbox.mkdirs() }
+}
+
+tasks.register('benchmarkHitRangeCpu', JavaExec) {
+    group = 'verification'
+    description = 'Optional CPU-only Hit Range geometry comparison; no in-game FPS/GPU claim'
+    dependsOn 'testClasses'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'vorga.phazeclient.implement.hitrange.HitRangePerformanceBench'
+    def sandbox = layout.buildDirectory.dir('regression/benchmarkHitRangeCpu').get().asFile
+    environment 'APPDATA', sandbox.absolutePath
+    systemProperty 'user.home', sandbox.absolutePath
+    doFirst { sandbox.mkdirs() }
+}
+
+loom {
+    mods {
+        phazePortSmoke { sourceSet sourceSets.portSmoke }
+        phazePreviewTests { sourceSet sourceSets.test }
+    }
+    runs {
+        portSmoke {
+            client()
+            source sourceSets.portSmoke
+            runDir 'build/port-smoke-client'
+            vmArg '-Dfabric.client.gametest'
+            vmArg '-Dfabric.client.gametest.modid=phaze_port_smoke'
+            vmArg '-Dphaze.rules.api=http://127.0.0.1:1'
+        }
+        packPreviewSmoke {
+            client()
+            source sourceSets.test
+            runDir 'build/pack-preview-client-test'
+            vmArg '-Dfabric.client.gametest'
+            vmArg '-Dfabric.client.gametest.modid=phaze_preview_tests'
+            vmArg '-Dphaze.rules.api=http://127.0.0.1:1'
+        }
+        hudBlurSmoke {
+            client()
+            source sourceSets.test
+            runDir 'build/hud-blur-client-test'
+            vmArg '-Dfabric.client.gametest'
+            vmArg '-Dfabric.client.gametest.modid=phaze_preview_tests'
+            vmArg '-Dphaze.rules.api=http://127.0.0.1:1'
+            if (project.hasProperty('hudBlurBenchmark')) vmArg '-Dphaze.hudBlur.benchmark=true'
+        }
+        textureFilterSmoke {
+            client()
+            source sourceSets.test
+            runDir 'build/texture-filter-client-test'
+            vmArg '-Dfabric.client.gametest'
+            vmArg '-Dfabric.client.gametest.modid=phaze_preview_tests'
+            vmArg '-Dphaze.rules.api=http://127.0.0.1:1'
+        }
+        hudEditorSmoke {
+            client()
+            source sourceSets.test
+            runDir 'build/hud-editor-client-test'
+            vmArg '-Dfabric.client.gametest'
+            vmArg '-Dfabric.client.gametest.modid=phaze_preview_tests'
+            vmArg '-Dphaze.rules.api=http://127.0.0.1:1'
+        }
+        bossBarSmoke {
+            client()
+            source sourceSets.test
+            runDir 'build/boss-bar-client-test'
+            vmArg '-Dfabric.client.gametest'
+            vmArg '-Dfabric.client.gametest.modid=phaze_preview_tests'
+            vmArg '-Dphaze.rules.api=http://127.0.0.1:1'
+        }
+        guiBench {
+            client()
+            source sourceSets.test
+            runDir 'build/gui-bench-client-test'
+            vmArg '-Dfabric.client.gametest'
+            vmArg '-Dfabric.client.gametest.modid=phaze_preview_tests'
+            vmArg '-Dphaze.rules.api=http://127.0.0.1:1'
+            if (project.hasProperty('guiBenchProfile')) {
+                vmArg '-Dphaze.guiBench.profile=true'
+                if (project.hasProperty('guiBenchCosmetics')) vmArg '-Dphaze.guiBench.cosmetics=true'
+                vmArg "-XX:StartFlightRecording=filename=gui-bench.jfr,settings=${project.findProperty('guiBenchJfc') ?: 'profile'}"
+            }
+        }
+    }
+}
+[
+        runPortSmoke: 'port-smoke-client',
+        runPackPreviewSmoke: 'pack-preview-client-test',
+        runHudBlurSmoke: 'hud-blur-client-test',
+        runTextureFilterSmoke: 'texture-filter-client-test',
+        runHudEditorSmoke: 'hud-editor-client-test',
+        runBossBarSmoke: 'boss-bar-client-test',
+        runGuiBench: 'gui-bench-client-test'
+].each { runName, dirName ->
+    tasks.matching { it.name == runName }.configureEach {
+        def sandbox = layout.buildDirectory.dir(dirName).get().asFile
+        environment 'APPDATA', sandbox.absolutePath
+        systemProperty 'user.home', sandbox.absolutePath
+        doFirst { sandbox.mkdirs() }
+    }
+}
+
 def targetJavaVersion = 21
 tasks.withType(JavaCompile).configureEach {
     it.options.encoding = "UTF-8"
@@ -105,9 +349,8 @@ jar {
     duplicatesStrategy(DuplicatesStrategy.EXCLUDE)
 }
 
-// NOTE (1.21.11 port): the licensed Custom Glint overlay from the 1.21.4
-// build is intentionally NOT carried over - Custom Glint is out of scope
-// for this port.
+// Features are ported as source against 1.21.11. Never overlay compiled
+// mixin classes from a different Minecraft version into the output jar.
 
 // configure the maven publication
 publishing {

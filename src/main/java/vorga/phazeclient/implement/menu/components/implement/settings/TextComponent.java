@@ -8,14 +8,14 @@ import lombok.AccessLevel;
 import lombok.experimental.FieldDefaults;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.input.KeyInput;
-import net.minecraft.client.util.math.MatrixStack;
 import org.lwjgl.glfw.GLFW;
 import vorga.phazeclient.api.feature.module.setting.implement.TextSetting;
 import vorga.phazeclient.api.system.font.FontRenderer;
-import vorga.phazeclient.api.system.font.Fonts;
+import vorga.phazeclient.implement.menu.font.GuiFonts;
+
+import static vorga.phazeclient.api.system.font.Fonts.Type.INTER_BOLD;
 import vorga.phazeclient.api.system.shape.ShapeProperties;
 import vorga.phazeclient.base.util.math.MathUtil;
-import vorga.phazeclient.base.util.other.StringUtil;
 import vorga.phazeclient.base.util.render.ScissorManager;
 import vorga.phazeclient.core.Main;
 import vorga.phazeclient.implement.menu.MenuStyle;
@@ -54,21 +54,15 @@ public class TextComponent extends AbstractSettingComponent {
             clearSelection();
         }
 
-        var labelFont = Fonts.getSize(14, Fonts.Type.INTER_BOLD);
+        var labelFont = GuiFonts.getSize(14, INTER_BOLD);
 
         boolean isModified = setting.isModified();
         float textOffset = animatedTextOffset(isModified);
 
         Matrix3x2fStack matrix = context.getMatrices();
 
-        MatrixStack textPose = new MatrixStack();
-        textPose.multiplyPositionMatrix(GuiMatrix.mat4(matrix));
-
-        FontRenderer font = Fonts.getSize(12);
-
-        String wrapped = StringUtil.wrap(setting.getLocalizedName(), (int) (width - 75 - textOffset), 14);
-        float wrappedHeight = Fonts.getSize(14).getStringHeight(wrapped);
-        height = (int) (20 + Math.max(0, (wrappedHeight - 14) / 2));
+        FontRenderer font = GuiFonts.getSize(12);
+        height = ROW_HEIGHT;
         float hoverProgress = animatedCardHover(MathUtil.isHovered(mouseX, mouseY, x, y, width, height));
 
         boolean overInputRect = MathUtil.isHovered(mouseX, mouseY,
@@ -93,7 +87,10 @@ public class TextComponent extends AbstractSettingComponent {
         resetIcon.position(x, y, height).alpha(currentAlpha).modified(isModified).render(context);
 
         float textX = x + 10 + textOffset;
-        labelFont.drawString(textPose, wrapped, textX, centeredTextY(labelFont, wrapped), primaryText());
+        String labelText = label.singleLine(setting.getLocalizedName());
+        label.render(matrix, labelFont, labelText, textX, centeredTextY(labelFont, labelText),
+                rectX - 8.0F, y, height, primaryText());
+        updateLabelHover(mouseX, mouseY);
 
         if (dragging) {
             cursorPosition = getCursorIndexAt(mouseX);
@@ -111,7 +108,7 @@ public class TextComponent extends AbstractSettingComponent {
         ScissorManager scissorManager = Main.getInstance().getScissorManager();
         scissorManager.push(GuiMatrix.mat4(matrix),
                 rectX + 1, rectY + 1, rectWidth - 2, rectHeight - 2);
-
+        try {
         if (typing && selectionStart != -1 && selectionEnd != -1 && selectionStart != selectionEnd) {
             int start = Math.max(0, Math.min(getStartOfSelection(), text.length()));
             int end = Math.max(0, Math.min(getEndOfSelection(), text.length()));
@@ -128,11 +125,12 @@ public class TextComponent extends AbstractSettingComponent {
             }
         }
 
-        font.drawString(textPose, text, rectX + 3 - xOffset, inputTextY,
+        font.drawString(matrix, text, rectX + 3 - xOffset, inputTextY,
                 MenuStyle.withAlpha(typing ? MenuStyle.TEXT_PRIMARY : MenuStyle.TEXT_MUTED, currentAlpha));
 
         if (!typing && text.isEmpty()) {
-            font.drawString(textPose, text = setting.getText(), rectX + 3, inputTextY, mutedText());
+            text = setting.getText() == null ? "" : setting.getText();
+            font.drawString(matrix, text, rectX + 3, inputTextY, mutedText());
         }
 
         long currentTime = System.currentTimeMillis();
@@ -145,7 +143,9 @@ public class TextComponent extends AbstractSettingComponent {
                     .build());
         }
 
-        scissorManager.pop();
+        } finally {
+            scissorManager.pop();
+        }
     }
 
     @Override
@@ -164,6 +164,8 @@ public class TextComponent extends AbstractSettingComponent {
             setting.reset();
             text = setting.getText() != null ? setting.getText() : "";
             cursorPosition = text.length();
+            clearSelection();
+            xOffset = 0;
             return true;
         }
 
@@ -173,6 +175,7 @@ public class TextComponent extends AbstractSettingComponent {
 
             ACTIVE_TEXT_COMPONENT_ID++;
             myActivationId = ACTIVE_TEXT_COMPONENT_ID;
+            typing = true;
             long currentTime = System.currentTimeMillis();
             if (currentTime - lastClickTime < 250) {
                 selectionStart = 0;
@@ -324,7 +327,7 @@ public class TextComponent extends AbstractSettingComponent {
     }
 
     private int getCursorIndexAt(double mouseX) {
-        FontRenderer font = Fonts.getSize(12, Fonts.Type.INTER_BOLD);
+        FontRenderer font = GuiFonts.getSize(12, INTER_BOLD);
         float relativeX = (float) mouseX - rectX - 3 + xOffset;
         int position = 0;
         while (position < text.length()) {

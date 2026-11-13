@@ -12,8 +12,12 @@ import lombok.experimental.Accessors;
 import vorga.phazeclient.api.system.font.entry.DrawEntry;
 import vorga.phazeclient.api.system.font.glyph.Glyph;
 import vorga.phazeclient.api.system.font.glyph.GlyphMap;
+import vorga.phazeclient.api.system.font.glyph.FontGlyphMetrics;
+import vorga.phazeclient.api.system.hud.Render2DBuffers;
+import vorga.phazeclient.api.system.hud.Render2DState;
+import vorga.phazeclient.api.system.shape.batched.GuiBatch;
+import net.minecraft.client.render.BuiltBuffer;
 import vorga.phazeclient.base.util.render.GuiMatrix;
-import vorga.phazeclient.base.QuickImports;
 import vorga.phazeclient.base.util.color.ColorUtil;
 import vorga.phazeclient.base.util.math.MathUtil;
 import vorga.phazeclient.base.util.other.StringUtil;
@@ -30,12 +34,11 @@ import org.joml.Matrix4f;
 
 import java.awt.*;
 
-import static com.mojang.blaze3d.vertex.VertexFormat.DrawMode.QUADS;
 import static net.minecraft.client.render.VertexFormats.POSITION_TEXTURE_COLOR;
 
 @Setter
 @Accessors(chain = true)
-public class FontRenderer implements QuickImports {
+public class FontRenderer implements AutoCloseable {
     private static final int STRING_BUILDER_POOL_SIZE = 16;
     private static final java.util.Queue<StringBuilder> STRING_BUILDER_POOL = new java.util.ArrayDeque<>(STRING_BUILDER_POOL_SIZE);
 
@@ -56,6 +59,8 @@ public class FontRenderer implements QuickImports {
     private final Char2ObjectOpenHashMap<Glyph> glyphCache = new Char2ObjectOpenHashMap<>();
     @Getter
     private Font font;
+    @Setter(lombok.AccessLevel.NONE)
+    private FontGlyphMetrics metrics;
 
     public FontRenderer(Font font, float sizePx) {
         init(font, sizePx);
@@ -63,10 +68,18 @@ public class FontRenderer implements QuickImports {
 
     private void init(Font font, float sizePx) {
         this.font = font.deriveFont(sizePx * 2);
+        this.metrics = new FontGlyphMetrics(this.font);
     }
 
-    private GlyphMap generateMap(char from, char to) {
-        GlyphMap glyphMap = new GlyphMap(from, to, this.font, randomIdentifier(), 5);
+    public FontRenderer setFont(Font font) {
+        close();
+        this.font = java.util.Objects.requireNonNull(font);
+        this.metrics = new FontGlyphMetrics(font);
+        return this;
+    }
+
+    private GlyphMap generateMap(int from, int to) {
+        GlyphMap glyphMap = new GlyphMap(from, to, metrics, randomIdentifier(), 5);
         maps.add(glyphMap);
         return glyphMap;
     }
@@ -85,8 +98,8 @@ public class FontRenderer implements QuickImports {
             }
         }
 
-        char base = (char) MathUtil.floorNearestMulN(glyph, 128);
-        Glyph result = generateMap(base, (char) (base + 128)).getGlyph(glyph);
+        int base = glyph & ~127;
+        Glyph result = generateMap(base, base + 128).getGlyph(glyph);
         glyphCache.put(glyph, result);
         return result;
     }
@@ -166,6 +179,9 @@ public class FontRenderer implements QuickImports {
     }
 
     public void drawString(MatrixStack matrix, String text, double x, double y, int color) {
+        RenderSystem.assertOnRenderThread();
+        GuiBatch.flush();
+        try {
         int length = text.length();
         float xOffset = 0;
         float yOffset = 0;
@@ -235,10 +251,13 @@ public class FontRenderer implements QuickImports {
         }
 
         if (!GLYPH_PAGE_CACHE.isEmpty()) drawGlyphs(matrix, x, y);
-        clearGlyphCache();
+        } finally { clearGlyphCache(); }
     }
 
     public void drawGradientString(MatrixStack matrix, String text, double x, double y, int colorStart, int colorEnd) {
+        RenderSystem.assertOnRenderThread();
+        GuiBatch.flush();
+        try {
         float xOffset = 0;
         float yOffset = 0;
         int lineStart = 0;
@@ -255,7 +274,7 @@ public class FontRenderer implements QuickImports {
             Glyph glyph = locateGlyph(c);
             if (glyph != null) {
                 if (glyph.value() != ' ') {
-                    float t = (float) i / (textLength - 1);
+                    float t = (float) i / Math.max(1, textLength - 1);
                     int color = interpolateColor(colorStart, colorEnd, t);
                     Identifier i1 = glyph.owner().bindToTexture;
                     DrawEntry entry = new DrawEntry(xOffset, yOffset, color, glyph);
@@ -266,11 +285,14 @@ public class FontRenderer implements QuickImports {
         }
 
         if (!GLYPH_PAGE_CACHE.isEmpty()) drawGlyphs(matrix, x, y);
-        clearGlyphCache();
+        } finally { clearGlyphCache(); }
     }
 
     public void drawAnimatedGradientString(MatrixStack matrix, String text, double x, double y,
                                           int colorStart, int colorEnd, double waveLength, double speed) {
+        RenderSystem.assertOnRenderThread();
+        GuiBatch.flush();
+        try {
         ANIMATION_TIME = System.currentTimeMillis() / 1000.0;
 
         float xOffset = 0;
@@ -304,7 +326,7 @@ public class FontRenderer implements QuickImports {
         }
 
         if (!GLYPH_PAGE_CACHE.isEmpty()) drawGlyphs(matrix, x, y);
-        clearGlyphCache();
+        } finally { clearGlyphCache(); }
     }
 
     public void drawAnimatedGradientString(MatrixStack matrix, String text, double x, double y,
@@ -320,18 +342,20 @@ public class FontRenderer implements QuickImports {
     }
 
     private void drawGlyphs(MatrixStack matrix, double x, double y) {
-
-        vorga.phazeclient.api.system.shape.batched.BatchedRectangle.flushIfBatching();
-
+        try (Render2DState ignored = Render2DState.capture()) {
         matrix.push();
+        try {
         matrix.translate(x, y - 3F, 0);
         matrix.scale(0.5F, 0.5F, 1);
         Matrix4f matrix4f = matrix.peek().getPositionMatrix();
 
         for (Identifier identifier : GLYPH_PAGE_CACHE.keySet()) {
-            net.minecraft.util.Identifier phaze$tex = identifier;
-        BufferBuilder buffer = tessellator().begin(QUADS, POSITION_TEXTURE_COLOR);
-            for (DrawEntry drawEntry : GLYPH_PAGE_CACHE.get(identifier)) {
+            ObjectList<DrawEntry> entries = GLYPH_PAGE_CACHE.get(identifier);
+            if (entries.isEmpty()) continue;
+            entries.getFirst().toDraw().owner().generate();
+            BufferBuilder buffer = Render2DBuffers.begin(POSITION_TEXTURE_COLOR);
+            try {
+            for (DrawEntry drawEntry : entries) {
                 float x1 = drawEntry.atX();
                 float y1 = drawEntry.atY();
 
@@ -354,14 +378,22 @@ public class FontRenderer implements QuickImports {
                 buffer.vertex(matrix4f, x1 + 0, y1 + 0, 0).texture(u1, v1).color(color);
             }
 
-            vorga.phazeclient.api.system.draw.GuiProjection.begin();
-            try {
-                vorga.phazeclient.api.system.draw.PhazeDrawLayers.positionTexColor(phaze$tex).draw(buffer.end());
-            } finally {
-                vorga.phazeclient.api.system.draw.GuiProjection.end();
+            try (BuiltBuffer built = buffer.end()) {
+                vorga.phazeclient.api.system.draw.GuiProjection.begin();
+                try {
+                    vorga.phazeclient.api.system.draw.PhazeDrawLayers.positionTexColor(identifier).draw(built);
+                } finally {
+                    vorga.phazeclient.api.system.draw.GuiProjection.end();
+                }
+            }
+            } catch (RuntimeException | Error failure) {
+                try { Render2DBuffers.discardImmediate(); }
+                catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+                throw failure;
             }
         }
-        matrix.pop();
+        } finally { matrix.pop(); }
+        }
     }
 
     public void drawCenteredString(MatrixStack stack, String s, double x, double y, int color) {
@@ -376,6 +408,7 @@ public class FontRenderer implements QuickImports {
         float currentLine = 0;
         float maxPreviousLines = 0;
         boolean ignore = false;
+        boolean customColor = false;
 
         for (int i = 0, n = text.length(); i < n; i++) {
             char c = text.charAt(i);
@@ -385,14 +418,18 @@ public class FontRenderer implements QuickImports {
             } else if (c == '§') {
                 ignore = true;
                 continue;
+            } else if (c == '⏏') {
+                customColor = !customColor;
+                continue;
+            } else if (customColor) {
+                continue;
             } else if (c == '\n') {
                 maxPreviousLines = Math.max(currentLine, maxPreviousLines);
                 currentLine = 0;
                 continue;
             }
 
-            Glyph glyph = locateGlyph(c);
-            currentLine += glyph == null ? 0 : glyph.width();
+            currentLine += metrics.get(c).width();
         }
 
         return Math.max(currentLine, maxPreviousLines) / 2;
@@ -405,21 +442,41 @@ public class FontRenderer implements QuickImports {
     public float getStringHeight(String text) {
         float currentLine = 0;
         float previous = 0;
+        boolean ignore = false, customColor = false;
 
         String source = text.isEmpty() ? " " : text;
         for (int i = 0, n = source.length(); i < n; i++) {
             char c = source.charAt(i);
+            if (ignore) { ignore = false; continue; }
+            if (c == '§') { ignore = true; continue; }
+            if (c == '⏏') { customColor = !customColor; continue; }
+            if (customColor) continue;
             if (c == '\n') {
-                currentLine = (currentLine == 0 ? locateGlyph(' ').height() : currentLine);
+                currentLine = (currentLine == 0 ? metrics.get(' ').height() : currentLine);
                 previous += currentLine;
                 currentLine = 0;
                 continue;
             }
-            Glyph glyph = locateGlyph(c);
-            currentLine = Math.max(glyph == null ? 0 : glyph.height(), currentLine);
+            currentLine = Math.max(metrics.get(c).height(), currentLine);
         }
 
         return currentLine + previous;
+    }
+
+    @Override public void close() {
+        RenderSystem.assertOnRenderThread();
+        Throwable failure = null;
+        for (GlyphMap map : maps) {
+            try { map.close(); }
+            catch (RuntimeException | Error problem) {
+                if (failure == null) failure = problem; else failure.addSuppressed(problem);
+            }
+        }
+        maps.clear();
+        glyphCache.clear();
+        clearGlyphCache();
+        if (failure instanceof Error error) throw error;
+        if (failure instanceof RuntimeException exception) throw exception;
     }
 
     private int interpolateColor(int colorStart, int colorEnd, float t) {

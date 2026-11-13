@@ -1,5 +1,4 @@
 package vorga.phazeclient.implement.features.modules.other;
-
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.projectile.thrown.SnowballEntity;
 import net.minecraft.item.ItemStack;
@@ -17,13 +16,10 @@ import vorga.phazeclient.api.feature.module.setting.implement.SectionSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.SelectSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.TextSetting;
 import vorga.phazeclient.api.feature.module.setting.implement.ValueSetting;
-
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-
 public final class FTHelper extends Module {
-
     private static final String[] COLOR_PRESETS = {
             "Black",
             "Lunar Blue", "Mocha Gold", "Rose Quartz", "Emerald Frost",
@@ -32,11 +28,8 @@ public final class FTHelper extends Module {
             "Moss Smoke", "Polar Night", "Snow", "Obsidian", "Nebula",
             "Coral", "Jade", "Sunset", "Violet", "Ocean"
     };
-
     private static final FTHelper INSTANCE = new FTHelper();
-
     public final SectionSetting abilitiesSection = new SectionSetting("Abilities");
-
     public final MultiSelectSetting enabledAbilities = new MultiSelectSetting(
             "Enabled Abilities",
             "Pick which FunTime abilities should stay active in the helper."
@@ -59,7 +52,6 @@ public final class FTHelper extends Module {
             "Divine Aura",
             "Freeze Snowball"
     );
-
     public final BooleanLike trapkaEnabled = () -> enabledAbilities.getSelected().contains("Trapka");
     public final BooleanLike drakonTrapkaEnabled = () -> enabledAbilities.getSelected().contains("Dragon Trap");
     public final BooleanLike dezorientationEnabled = () -> enabledAbilities.getSelected().contains("Disorientation");
@@ -68,7 +60,6 @@ public final class FTHelper extends Module {
     public final BooleanLike plastEnabled = () -> enabledAbilities.getSelected().contains("Plate");
     public final BooleanLike bozhestvennayaAuraEnabled = () -> enabledAbilities.getSelected().contains("Divine Aura");
     public final BooleanLike snezhokZamorozkaEnabled = () -> enabledAbilities.getSelected().contains("Freeze Snowball");
-
     public final SectionSetting visualSection = new SectionSetting("Visual");
     public final ValueSetting circleThickness = new ValueSetting(
             "Circle Thickness",
@@ -83,7 +74,6 @@ public final class FTHelper extends Module {
             "Brightness of the flat halo under each circle"
     ).range(0.20f, 4.0f).step(0.05f).setValue(1.5f)
             .visible(() -> circleGlow.isValue());
-
     public final SectionSetting circleColorSection = new SectionSetting("Circle Color");
     public final BooleanSetting circleUseThemeColor = new BooleanSetting(
             "Theme Color",
@@ -94,7 +84,6 @@ public final class FTHelper extends Module {
             "Fixed color preset for circles (when Theme Color is off)"
     ).value(COLOR_PRESETS).selected("Lunar Blue")
             .visible(() -> !circleUseThemeColor.isValue());
-
     public final SectionSetting boxColorSection = new SectionSetting("Box Color");
     public final BooleanSetting boxUseThemeColor = new BooleanSetting(
             "Theme Color",
@@ -105,9 +94,7 @@ public final class FTHelper extends Module {
             "Fixed color preset for boxes (when Theme Color is off)"
     ).value(COLOR_PRESETS).selected("Lunar Blue")
             .visible(() -> !boxUseThemeColor.isValue());
-
     public final SectionSetting nameSection = new SectionSetting("Name Overrides");
-
     public final TextSetting trapkaName = new TextSetting(
             "Trapka Name",
             "Substring to match in the held item's display name to identify a трапка"
@@ -142,12 +129,10 @@ public final class FTHelper extends Module {
             "Freeze Snowball Name",
             "Substring to match for снежок заморозки (used both for in-flight tracking and held-hand prediction)"
     ).setText("снежок заморозки").setMax(48);
-
     @FunctionalInterface
     public interface BooleanLike {
         boolean isValue();
     }
-
     private FTHelper() {
         super("ft_helper", "FT Helper", ModuleCategory.UTILITIES);
         enabledAbilities.setFullWidth(true);
@@ -178,26 +163,21 @@ public final class FTHelper extends Module {
                 bozhestvennayaAuraName, snezhokZamorozkaName
         );
     }
-
     public static FTHelper getInstance() {
         return INSTANCE;
     }
-
     @Override
     public String getDescription() {
         return "FunTime ability detector and visualizer toggles";
     }
-
     @Override
     public String getIcon() {
         return "ft_helper.png";
     }
-
     @Override
     public float getIconSize() {
         return 21.0F;
     }
-
     public enum HighlightType {
         NONE,
         TRAPKA,
@@ -207,7 +187,6 @@ public final class FTHelper extends Module {
         BOZHESTVENNAYA_AURA,
         SNEZHOK_PREDICTION
     }
-
     public HighlightType getHighlightType() {
         if (!isEnabled()) {
             return HighlightType.NONE;
@@ -216,16 +195,22 @@ public final class FTHelper extends Module {
         if (client == null || client.player == null) {
             return HighlightType.NONE;
         }
-
         ItemStack mainHand = client.player.getMainHandStack();
         if (mainHand == null || mainHand.isEmpty()) {
             return HighlightType.NONE;
         }
+        net.minecraft.item.Item item = mainHand.getItem();
+        if (item != Items.NETHERITE_SCRAP
+                && item != Items.ENDER_EYE
+                && item != Items.SUGAR
+                && item != Items.FIRE_CHARGE
+                && item != Items.DRIED_KELP
+                && item != Items.PHANTOM_MEMBRANE
+                && item != Items.SNOWBALL) {
+            return HighlightType.NONE;
+        }
         String itemName = mainHand.getName().getString().toLowerCase();
-
-        if (trapkaEnabled.isValue()
-                && mainHand.getItem() == Items.NETHERITE_SCRAP) {
-
+        if (trapkaEnabled.isValue() && item == Items.NETHERITE_SCRAP) {
             if (drakonTrapkaEnabled.isValue()
                     && itemName.contains(drakonTrapkaName.getText().toLowerCase())) {
                 return HighlightType.TRAPKA_DRAGON;
@@ -235,44 +220,42 @@ public final class FTHelper extends Module {
             }
         }
         if (dezorientationEnabled.isValue()
-                && mainHand.getItem() == Items.ENDER_EYE
+                && item == Items.ENDER_EYE
                 && itemName.contains(dezorientationName.getText().toLowerCase())) {
             return HighlightType.CIRCLE_10;
         }
         if (yavnayaPylEnabled.isValue()
-                && mainHand.getItem() == Items.SUGAR
+                && item == Items.SUGAR
                 && itemName.contains(yavnayaPylName.getText().toLowerCase())) {
             return HighlightType.CIRCLE_10;
         }
         if (ognennyiSmerchEnabled.isValue()
-                && mainHand.getItem() == Items.FIRE_CHARGE
+                && item == Items.FIRE_CHARGE
                 && itemName.contains(ognennyiSmerchName.getText().toLowerCase())) {
             return HighlightType.CIRCLE_10;
         }
         if (plastEnabled.isValue()
-                && mainHand.getItem() == Items.DRIED_KELP
+                && item == Items.DRIED_KELP
                 && itemName.contains(plastName.getText().toLowerCase())) {
             return HighlightType.PLAST;
         }
         if (bozhestvennayaAuraEnabled.isValue()
-                && mainHand.getItem() == Items.PHANTOM_MEMBRANE
+                && item == Items.PHANTOM_MEMBRANE
                 && itemName.contains(bozhestvennayaAuraName.getText().toLowerCase())) {
             return HighlightType.BOZHESTVENNAYA_AURA;
         }
         if (snezhokZamorozkaEnabled.isValue()
-                && mainHand.getItem() == Items.SNOWBALL
+                && item == Items.SNOWBALL
                 && itemName.contains(snezhokZamorozkaName.getText().toLowerCase())) {
             return HighlightType.SNEZHOK_PREDICTION;
         }
         return HighlightType.NONE;
     }
-
     public BlockPos getPlayerPos() {
         if (!isEnabled()) return null;
         MinecraftClient client = MinecraftClient.getInstance();
         return client != null && client.player != null ? client.player.getBlockPos() : null;
     }
-
     public BlockPos getTargetBlockPos() {
         if (!isEnabled()) return null;
         MinecraftClient client = MinecraftClient.getInstance();
@@ -282,7 +265,6 @@ public final class FTHelper extends Module {
         }
         return null;
     }
-
     public Direction getTargetBlockSide() {
         if (!isEnabled()) return null;
         MinecraftClient client = MinecraftClient.getInstance();
@@ -292,15 +274,12 @@ public final class FTHelper extends Module {
         }
         return null;
     }
-
     public float getPlayerPitch() {
         if (!isEnabled()) return 0.0F;
         MinecraftClient client = MinecraftClient.getInstance();
         return client != null && client.player != null ? client.player.getPitch() : 0.0F;
     }
-
     private final List<TrackedSnowball> tracked = new ArrayList<>();
-
     public void trackSnowball(SnowballEntity snowball) {
         if (!isEnabled() || !snezhokZamorozkaEnabled.isValue() || snowball == null) {
             return;
@@ -315,7 +294,6 @@ public final class FTHelper extends Module {
         }
         tracked.add(new TrackedSnowball(snowball));
     }
-
     public void tickTrackedSnowballs() {
         Iterator<TrackedSnowball> it = tracked.iterator();
         while (it.hasNext()) {
@@ -324,39 +302,29 @@ public final class FTHelper extends Module {
                 it.remove();
                 continue;
             }
-
             t.appendTrailPoint(t.snowball.getEntityPos());
         }
     }
-
     public List<TrackedSnowball> getTrackedSnowballs() {
         return tracked;
     }
-
     @Override
     public void deactivate() {
         super.deactivate();
         tracked.clear();
     }
-
     public static final class TrackedSnowball {
         public final SnowballEntity snowball;
-
         private final List<Vec3d> trail = new ArrayList<>();
-
         TrackedSnowball(SnowballEntity snowball) {
             this.snowball = snowball;
             if (snowball != null) {
-
                 trail.add(snowball.getEntityPos());
             }
         }
-
         public Vec3d getPosition() {
-
             return snowball.getEntityPos();
         }
-
         public Vec3d getRenderPosition(float tickDelta) {
             return new Vec3d(
                     MathHelper.lerp(tickDelta, snowball.lastRenderX, snowball.getX()),
@@ -364,14 +332,11 @@ public final class FTHelper extends Module {
                     MathHelper.lerp(tickDelta, snowball.lastRenderZ, snowball.getZ())
             );
         }
-
         public BlockPos getBlockPos() {
             return snowball.getBlockPos();
         }
-
         void appendTrailPoint(Vec3d pos) {
             if (pos == null) return;
-
             if (!trail.isEmpty()) {
                 Vec3d last = trail.get(trail.size() - 1);
                 if (last.squaredDistanceTo(pos) < 1e-4) return;
@@ -381,20 +346,16 @@ public final class FTHelper extends Module {
                 trail.remove(0);
             }
         }
-
         public List<Vec3d> getTrail() {
             return trail;
         }
     }
-
     public int resolveCircleColor() {
         return resolvePresetColor(circleUseThemeColor.isValue(), circleColorPreset.getSelected());
     }
-
     public int resolveBoxColor() {
         return resolvePresetColor(boxUseThemeColor.isValue(), boxColorPreset.getSelected());
     }
-
     private static int resolvePresetColor(boolean useTheme, String presetName) {
         if (!useTheme && "Black".equalsIgnoreCase(presetName)) {
             return 0xFF000000;
