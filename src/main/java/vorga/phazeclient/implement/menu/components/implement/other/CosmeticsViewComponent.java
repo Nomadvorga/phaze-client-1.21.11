@@ -542,9 +542,12 @@ public final class CosmeticsViewComponent extends AbstractComponent {
         }
 
         BatchedRectangle.flushIfBatching();
-        renderPlayerPreviewEntity(
-                context, player, panelX, panelY, globalAlpha
-        );
+        float alpha = globalAlpha;
+        // The preview refreshes on its own 60 Hz clock; the menu frame cache keeps the rest of the page.
+        vorga.phazeclient.implement.menu.MenuFrameCache.island(context, live -> {
+            ClientPlayerEntity current = MinecraftClient.getInstance().player;
+            if (current != null) renderPlayerPreviewEntity(live, current, panelX, panelY, alpha);
+        });
     }
 
     private void renderPlayerPreviewEntity(

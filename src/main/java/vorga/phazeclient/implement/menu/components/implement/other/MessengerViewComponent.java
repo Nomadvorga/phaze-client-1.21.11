@@ -1323,6 +1323,7 @@ public final class MessengerViewComponent extends AbstractComponent {
                 }
             }
             drawMentionText(context, visible, textOrigin, textY, INPUT_TEXT_SIZE, MenuStyle.TEXT_PRIMARY);
+            if (inputFocused) vorga.phazeclient.api.system.animation.FrameRepaint.blink(500L);
             if (inputFocused && (System.currentTimeMillis() / 500L) % 2L == 0L) {
                 int caret = Math.max(visibleStart, Math.min(cursor, visibleEnd));
                 float caretX = startX + renderedTextWidth(input.substring(visibleStart, caret), INPUT_TEXT_SIZE);

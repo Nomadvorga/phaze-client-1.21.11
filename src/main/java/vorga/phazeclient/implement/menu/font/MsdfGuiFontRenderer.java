@@ -95,6 +95,7 @@ public final class MsdfGuiFontRenderer extends FontRenderer implements GuiTextRe
                           boolean animated, double waveLength, double speed) {
         GuiTextLayout layout = layout(text);
         double time = System.currentTimeMillis() / 1000.0;
+        if (animated) vorga.phazeclient.api.system.animation.FrameRepaint.now();
         for (int i = 0; i < layout.glyphs.size(); i++) {
             GuiTextLayout.Glyph glyph = layout.glyphs.get(i);
             float t = (float) i / Math.max(1, layout.glyphs.size() - 1);

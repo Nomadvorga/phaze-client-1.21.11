@@ -13,6 +13,7 @@ import vorga.phazeclient.api.feature.module.Module;
 import vorga.phazeclient.api.feature.module.ModuleCategory;
 import vorga.phazeclient.api.system.animation.Animation;
 import vorga.phazeclient.api.system.animation.Direction;
+import vorga.phazeclient.api.system.animation.FrameRepaint;
 import vorga.phazeclient.api.feature.module.setting.Setting;
 import vorga.phazeclient.api.system.animation.implement.DecelerateAnimation;
 import vorga.phazeclient.api.system.font.msdf.MsdfFont;
@@ -115,6 +116,8 @@ public class SearchComponent extends AbstractComponent {
 
         float targetWidth = typing ? EXPANDED_WIDTH : COLLAPSED_WIDTH;
         animatedWidth = MathHelper.lerp(delta * 0.5F, animatedWidth, targetWidth);
+        if (Math.abs(animatedWidth - targetWidth) > 0.02F) FrameRepaint.now();
+        if (typing) FrameRepaint.blink(500L);
 
         width = animatedWidth;
         height = SEARCH_HEIGHT;

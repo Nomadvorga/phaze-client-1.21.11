@@ -73,6 +73,19 @@ public final class CursorManager {
         requestShape(SHAPE_VRESIZE, 2);
     }
 
+    public static int requestedShape() {
+        return requestedShape;
+    }
+
+    public static int requestedPriority() {
+        return requestedPriority;
+    }
+
+    /** Re-issues a request recorded from a frame whose drawing is being replayed from cache. */
+    public static void replayRequest(int shape, int priority) {
+        requestShape(shape, priority);
+    }
+
     public static void beginDrag(int shape) {
         // GUI sliders renew the pin every frame; never change the OS
         // cursor when the module or its Dynamic Cursor toggle is off.

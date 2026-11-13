@@ -135,6 +135,7 @@ public class TextComponent extends AbstractSettingComponent {
 
         long currentTime = System.currentTimeMillis();
         boolean focused = typing && (currentTime % 1000 < 500);
+        if (typing) vorga.phazeclient.api.system.animation.FrameRepaint.blink(500L);
 
         if (focused && (selectionStart == -1 || selectionStart == selectionEnd)) {
             float cursorX = font.getStringWidth(text.substring(0, cursorPosition));

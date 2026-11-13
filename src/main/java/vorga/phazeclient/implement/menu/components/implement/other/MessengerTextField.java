@@ -100,6 +100,7 @@ final class MessengerTextField implements QuickImports {
             MsdfRenderer.renderText(MsdfFonts.medium(), visible, TEXT_SIZE,
                     MenuStyle.withAlpha(MenuStyle.TEXT_PRIMARY, alpha), matrix, textX, textY, 0.0F);
         }
+        if (focused) vorga.phazeclient.api.system.animation.FrameRepaint.blink(500L);
         if (focused && (System.currentTimeMillis() / 500L) % 2L == 0L) {
             int start = value.isEmpty() ? 0 : visibleStart(available);
             float caretX = textX + width(value.substring(start, Math.max(start, cursor)));

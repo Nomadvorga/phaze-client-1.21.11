@@ -292,7 +292,11 @@ public class Blur implements Shape {
         immediateInput = null;
         halfA = halfB = quarterA = quarterB = menuOverlayInput = null;
         for (MenuBlurSlot[] slots : new MenuBlurSlot[][] { menuBlurSlots, hudBlurSlots }) {
-            for (MenuBlurSlot slot : slots) if (slot != null) targets.add(slot.framebuffer);
+            for (MenuBlurSlot slot : slots) {
+                if (slot == null) continue;
+                targets.add(slot.framebuffer);
+                if (slot.resolved != null) targets.add(slot.resolved);
+            }
             java.util.Arrays.fill(slots, null);
         }
         GpuBuffer[] buffers = { compositeUbo, dualKawaseUbo, gaussianUbo };
@@ -436,27 +440,30 @@ public class Blur implements Shape {
         float localPadX = padX / Math.max(0.001F, size.x);
         float localPadY = padY / Math.max(0.001F, size.y);
         int color = ColorUtil.multAlpha(shape.getColor().x, alpha);
-        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
-        drawEngine.quad(
-                matrix4f,
-                buffer,
-                shape.getX() - localPadX,
-                shape.getY() - localPadY,
-                shape.getWidth() + localPadX * 2.0F,
-                shape.getHeight() + localPadY * 2.0F,
-                color
-        );
+        int blurMode = Theme.getInstance().getHudBlurMode();
+        GpuTextureView compositeSource = slot.framebuffer != null ? slot.framebuffer.getColorAttachmentView() : null;
+        float compositeRadius = blurRadius;
+        // Mode 5 mixes in the live input, so only the other modes can reuse their resolved shader blur.
+        if (compositeSource != null && blurMode != 5) {
+            GpuTextureView resolved = resolveMenuBlur(slot, shape, matrix4f, localPadX, localPadY,
+                    width, height, blurRadius, blurMode);
+            if (resolved != null) {
+                compositeSource = resolved;
+                compositeRadius = 0.0F;
+                blurMode = 0;
+            }
+        }
 
         drawComposite(
-                buffer.end(),
+                gaussianQuad(shape, matrix4f, localPadX, localPadY, color),
                 matrix4f,
-                slot.framebuffer != null ? slot.framebuffer.getColorAttachmentView() : null,
+                compositeSource,
                 null,
                 width, height,
                 round,
                 softness,
-                blurRadius,
-                Theme.getInstance().getHudBlurMode(),
+                compositeRadius,
+                blurMode,
                 noTint(),
                 1.0F,
                 false,
@@ -464,6 +471,57 @@ public class Blur implements Shape {
                 padX,
                 padY);
         restoreRenderState(true);
+    }
+
+    private static final Vector4f NO_ROUND = new Vector4f();
+
+    private BuiltBuffer gaussianQuad(ShapeProperties shape, Matrix4f matrix, float padX, float padY, int color) {
+        BufferBuilder buffer = Tessellator.getInstance().begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+        drawEngine.quad(matrix, buffer, shape.getX() - padX, shape.getY() - padY,
+                shape.getWidth() + padX * 2.0F, shape.getHeight() + padY * 2.0F, color);
+        return buffer.end();
+    }
+
+    /**
+     * Runs the composite shader's blur over the quad once into {@link MenuBlurSlot#resolved}, so frames between
+     * blur refreshes composite with a single tap. Returns {@code null} when it cannot be resolved.
+     */
+    private GpuTextureView resolveMenuBlur(MenuBlurSlot slot, ShapeProperties shape, Matrix4f matrix,
+                                           float padX, float padY, float width, float height,
+                                           float blurRadius, int blurMode) {
+        Framebuffer blurred = slot.framebuffer;
+        if (slot.resolved == null || slot.resolved.textureWidth != blurred.textureWidth
+                || slot.resolved.textureHeight != blurred.textureHeight) {
+            if (slot.resolved != null) slot.resolved.delete();
+            slot.resolved = new SimpleFramebuffer("phaze/blur/menu_resolved", blurred.textureWidth, blurred.textureHeight, false);
+            slot.resolvedKey = Long.MIN_VALUE;
+        }
+        long key = slot.sourceRevision;
+        key = key * 31L + slot.lastRefreshNs;
+        key = key * 31L + Float.floatToIntBits(blurRadius);
+        key = key * 31L + blurMode;
+        key = key * 31L + Float.floatToIntBits(shape.getX() - padX);
+        key = key * 31L + Float.floatToIntBits(shape.getY() - padY);
+        key = key * 31L + Float.floatToIntBits(shape.getWidth() + padX * 2.0F);
+        key = key * 31L + Float.floatToIntBits(shape.getHeight() + padY * 2.0F);
+        key = key * 31L + matrix.hashCode();
+        if (key == slot.resolvedKey) return slot.resolved.getColorAttachmentView();
+
+        vorga.phazeclient.api.system.shape.batched.GuiBatch.flush();
+        GpuTextureView previousColor = RenderSystem.outputColorTextureOverride;
+        GpuTextureView previousDepth = RenderSystem.outputDepthTextureOverride;
+        RenderSystem.outputColorTextureOverride = slot.resolved.getColorAttachmentView();
+        RenderSystem.outputDepthTextureOverride = null;
+        try {
+            drawComposite(gaussianQuad(shape, matrix, padX, padY, 0xFFFFFFFF), matrix,
+                    blurred.getColorAttachmentView(), null, width, height, NO_ROUND,
+                    1.0F, blurRadius, blurMode, noTint(), 1.0F, true, true, 0.0F, 0.0F);
+        } finally {
+            RenderSystem.outputColorTextureOverride = previousColor;
+            RenderSystem.outputDepthTextureOverride = previousDepth;
+        }
+        slot.resolvedKey = key;
+        return slot.resolved.getColorAttachmentView();
     }
 
     public void renderCached(ShapeProperties shape) {
@@ -1828,6 +1886,9 @@ public class Blur implements Shape {
         private long lastUseNs = 0L;
         private float blurRadius = -1.0f;
         private boolean valid = false;
+        /** The composite shader's own blur of {@link #framebuffer}, done once per refresh instead of per frame. */
+        private Framebuffer resolved;
+        private long resolvedKey = Long.MIN_VALUE;
 
         private MenuBlurSlot(Framebuffer framebuffer) {
             this.framebuffer = framebuffer;

@@ -79,12 +79,14 @@ public class MathUtil {
         }
     }
     public float blinking(double speed, float f) {
+        vorga.phazeclient.api.system.animation.FrameRepaint.now();
         float red = (float) (System.currentTimeMillis() % speed / (speed / f));
         if (red > f / 2) red = f - red;
         return red;
     }
     public float textScrolling(float textWidth) {
         int speed = (int) (textWidth * 75);
+        vorga.phazeclient.api.system.animation.FrameRepaint.now();
         return (float) MathHelper.clamp((System.currentTimeMillis() % speed * Math.PI / speed), 0, 1) * textWidth;
     }
     public void setAlpha(float alpha, Runnable data) {
@@ -148,12 +150,13 @@ public class MathUtil {
         return tickCounter != null ? lerp(tickCounter.getTickProgress(false), prev, orig) : orig;
     }
     public float interpolateSmooth(double smooth, float prev, float orig) {
-        RenderTickCounter tickCounter = currentTickCounter();
-        return tickCounter != null ? (float) lerp(tickCounter.getFixedDeltaTicks() / smooth, prev, orig) : orig;
+        return (float) interpolateSmooth(smooth, (double) prev, (double) orig);
     }
     public double interpolateSmooth(double smooth, double prev, double orig) {
         RenderTickCounter tickCounter = currentTickCounter();
-        return tickCounter != null ? lerp(tickCounter.getFixedDeltaTicks() / smooth, prev, orig) : orig;
+        double value = tickCounter != null ? lerp(tickCounter.getFixedDeltaTicks() / smooth, prev, orig) : orig;
+        if (Math.abs(value - orig) > 0.02) vorga.phazeclient.api.system.animation.FrameRepaint.now();
+        return value;
     }
     private RenderTickCounter currentTickCounter() {
         MinecraftClient client = MinecraftClient.getInstance();

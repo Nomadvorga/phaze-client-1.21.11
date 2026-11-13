@@ -173,12 +173,14 @@ public class ColorUtil {
         return gradient;
     }
     public int rainbow(int speed, int index, float saturation, float brightness, float opacity) {
+        vorga.phazeclient.api.system.animation.FrameRepaint.now();
         int angle = (int) ((System.currentTimeMillis() / speed + index) % 360);
         float hue = angle / 360f;
         int color = Color.HSBtoRGB(hue, saturation, brightness);
         return getColor(red(color), green(color), blue(color), Math.round(opacity * 255));
     }
     public int fade(int speed, int index, int first, int second) {
+        vorga.phazeclient.api.system.animation.FrameRepaint.now();
         int angle = (int) ((System.currentTimeMillis() / speed + index) % 360);
         angle = angle >= 180 ? 360 - angle : angle;
         return overCol(first, second, angle / 180f);
@@ -200,6 +202,7 @@ public class ColorUtil {
         if (colors.length == 0) return getColor(255, 255, 255);
         if (colors.length == 1) return colors[0];
         float speedMultiplier = Theme.getInstance().getFadeSpeed();
+        vorga.phazeclient.api.system.animation.FrameRepaint.now();
         long currentTime = System.currentTimeMillis();
         if (colors.length == 2) {
             double adjustedSpeed = 8.0 / speedMultiplier;

@@ -61,7 +61,9 @@ public abstract class Animation implements AnimationCalculation {
 
     public double getOutputDouble() {
         double time = (1 - calculation(counter.getTime())) * value;
-        return direction == FORWARDS ? endValue() : isDone() ? 0.0 : time;
+        boolean done = isDone();
+        if (!done) FrameRepaint.now();
+        return direction == FORWARDS ? endValue() : done ? 0.0 : time;
     }
 
     public float getOutputFloat() {

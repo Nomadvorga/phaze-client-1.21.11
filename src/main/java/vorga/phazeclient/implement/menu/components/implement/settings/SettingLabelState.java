@@ -40,6 +40,7 @@ public final class SettingLabelState {
     }
     private float sampleWidth(long now) {
         float t = clamp((float) Math.max(0L, now - widthStarted) / WIDTH_TRANSITION_NANOS);
+        if (t < 1.0F) vorga.phazeclient.api.system.animation.FrameRepaint.now();
         float progress = 1.0F - (1.0F - t) * (1.0F - t);
         return widthFrom + (widthTarget - widthFrom) * progress;
     }
@@ -59,6 +60,7 @@ public final class SettingLabelState {
     }
     public float offset(long now) {
         if (!running || !isOverflowing()) return 0.0F;
+        vorga.phazeclient.api.system.animation.FrameRepaint.now();
         long elapsed = Math.max(0L, now - started);
         if (returning) {
             long duration = (long) (RETURN_NANOS * startFraction);

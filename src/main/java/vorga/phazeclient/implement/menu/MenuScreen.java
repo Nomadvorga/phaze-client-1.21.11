@@ -77,6 +77,8 @@ public class MenuScreen extends Screen implements QuickImports {
             new vorga.phazeclient.implement.menu.components.implement.other.MessengerViewComponent();
     private final vorga.phazeclient.implement.menu.components.implement.other.WaypointEditorModal waypointEditor =
             new vorga.phazeclient.implement.menu.components.implement.other.WaypointEditorModal();
+    @Getter(lombok.AccessLevel.NONE)
+    private final MenuFrameCache frameCache = new MenuFrameCache();
     public final Animation animation = new LinearAnimation().setMs(200).setValue(1);
     private final Animation topTabTransitionAnimation =
             new DecelerateAnimation().setMs(TOP_TAB_TRANSITION_MS).setValue(1);
@@ -179,6 +181,8 @@ public class MenuScreen extends Screen implements QuickImports {
             vorga.phazeclient.api.system.shape.batched.BatchedRectangle.beginScope();
             try {
                 MathUtil.scale(context.getMatrices(), x + (float) width / 2, y + (float) height / 2, scaleAnimation, () -> renderGuiRegionBlur(context));
+                long frameKey = frameCacheKey(overlayMouseX, overlayMouseY, guiScale, scaleAnimation, alphaAnimation);
+                frameCache.render(context, frameKey, isFrameCacheable(), () ->
                 MathUtil.scale(context.getMatrices(), x + (float) width / 2, y + (float) height / 2, scaleAnimation, () -> {
                     boolean moduleDetailOpen = moduleDetailComponent.isOpen();
                     boolean configsViewOpen = configsView.isOpen();
@@ -223,7 +227,7 @@ public class MenuScreen extends Screen implements QuickImports {
                     configShareModal.position(x, y).size(width, height);
                     configShareModal.globalAlpha = alphaAnimation;
                     configShareModal.render(context, overlayMouseX, overlayMouseY, delta);
-                });
+                }));
             } finally {
                 vorga.phazeclient.api.system.shape.batched.BatchedRectangle.endScope();
             }
@@ -231,6 +235,45 @@ public class MenuScreen extends Screen implements QuickImports {
             context.getMatrices().popMatrix();
         }
         renderCenterGuides(context);
+    }
+
+    private long frameCacheKey(int mouseX, int mouseY, float guiScale, float scaleAnimation, float alphaAnimation) {
+        Window window = MinecraftClient.getInstance().getWindow();
+        long h = 17L;
+        h = h * 31L + x;
+        h = h * 31L + y;
+        h = h * 31L + width;
+        h = h * 31L + height;
+        h = h * 31L + mouseX;
+        h = h * 31L + mouseY;
+        h = h * 31L + Float.floatToIntBits(overlayRenderScale);
+        h = h * 31L + Float.floatToIntBits(guiScale);
+        h = h * 31L + Float.floatToIntBits(scaleAnimation);
+        h = h * 31L + Float.floatToIntBits(alphaAnimation);
+        h = h * 31L + (window != null ? window.getFramebufferWidth() : 0);
+        h = h * 31L + (window != null ? window.getFramebufferHeight() : 0);
+        h = h * 31L + activeTopTab.ordinal();
+        h = h * 31L + category.ordinal();
+        h = h * 31L + System.identityHashCode(moduleDetailComponent.isOpen() ? moduleDetailComponent.getModule() : null);
+        h = h * 31L + (configsView.isOpen() ? 1 : 0) + (cosmeticsView.isOpen() ? 2 : 0)
+                + (messengerView.isOpen() ? 4 : 0) + (messengerView.shouldRender() ? 8 : 0);
+        return h;
+    }
+
+    /** Overlay windows and modals sample the frame under them, so they are drawn live. */
+    private boolean isFrameCacheable() {
+        return windowManager.getWindows().isEmpty() && !configShareModal.isOpen() && !waypointEditor.isOpen()
+                && !menuDragging;
+    }
+
+    private void invalidateFrame() {
+        frameCache.invalidate();
+    }
+
+    @Override
+    public void removed() {
+        frameCache.release();
+        super.removed();
     }
 
     static void applyMenuTransform(org.joml.Matrix3x2fStack matrices, float overlayScale, float guiScale,
@@ -303,6 +346,7 @@ public class MenuScreen extends Screen implements QuickImports {
     }
 
     public void openGui() {
+        invalidateFrame();
         updateOverlayMetrics();
         animation.setDirection(Direction.FORWARDS);
         categoryContainerComponent.ensureCategoryComponentsInitialized();
@@ -569,6 +613,7 @@ public class MenuScreen extends Screen implements QuickImports {
 
     @Override
     public boolean mouseClicked(Click click, boolean doubled) {
+        invalidateFrame();
         double mouseX = click.x();
         double mouseY = click.y();
         int button = click.button();
@@ -670,6 +715,7 @@ public class MenuScreen extends Screen implements QuickImports {
 
     @Override
     public boolean mouseReleased(Click click) {
+        invalidateFrame();
         double mouseX = click.x();
         double mouseY = click.y();
         int button = click.button();
@@ -719,6 +765,7 @@ public class MenuScreen extends Screen implements QuickImports {
 
     @Override
     public boolean mouseDragged(Click click, double deltaX, double deltaY) {
+        invalidateFrame();
         double mouseX = click.x();
         double mouseY = click.y();
         int button = click.button();
@@ -787,6 +834,7 @@ public class MenuScreen extends Screen implements QuickImports {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontal, double vertical) {
+        invalidateFrame();
 
         vorga.phazeclient.api.system.cursor.CursorManager.notifyScroll(horizontal, vertical);
 
@@ -829,6 +877,7 @@ public class MenuScreen extends Screen implements QuickImports {
 
     @Override
     public boolean keyPressed(KeyInput input) {
+        invalidateFrame();
         int keyCode = input.key();
         int scanCode = input.scancode();
         int modifiers = input.modifiers();
@@ -882,6 +931,7 @@ public class MenuScreen extends Screen implements QuickImports {
 
     @Override
     public boolean keyReleased(KeyInput input) {
+        invalidateFrame();
         int keyCode = input.key();
         int scanCode = input.scancode();
         int modifiers = input.modifiers();
@@ -905,6 +955,7 @@ public class MenuScreen extends Screen implements QuickImports {
 
     @Override
     public boolean charTyped(CharInput input) {
+        invalidateFrame();
         char chr = (char) input.codepoint();
         int modifiers = input.modifiers();
         if (waypointEditor.isOpen() && waypointEditor.charTyped(chr, modifiers)) {

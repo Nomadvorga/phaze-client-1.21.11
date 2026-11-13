@@ -8,11 +8,15 @@ public final class GuiDrawStats {
     public static int bufferDraws;
     public static int scissorChanges;
     public static int batchInstances;
+    public static int menuCaptures;
+    public static int menuReplays;
 
     private GuiDrawStats() {
     }
 
     public static void reset() {
+        menuCaptures = 0;
+        menuReplays = 0;
         rectDraws = 0;
         msdfDraws = 0;
         stateSnapshots = 0;
