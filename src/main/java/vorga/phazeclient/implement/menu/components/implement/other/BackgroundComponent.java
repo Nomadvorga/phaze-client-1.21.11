@@ -373,7 +373,8 @@ public class BackgroundComponent extends AbstractComponent {
             return true;
         }
 
-        if (isFullWidthPage()) {
+        if (MenuScreen.INSTANCE.isConfigsViewOpen() || MenuScreen.INSTANCE.isCosmeticsViewOpen()
+                || MenuScreen.INSTANCE.isMessengerViewOpen()) {
             return false;
         }
 
@@ -500,7 +501,8 @@ public class BackgroundComponent extends AbstractComponent {
         if (isTopTabHovered(mouseX, mouseY)) {
             return true;
         }
-        if (isFullWidthPage()) return false;
+        if (MenuScreen.INSTANCE.isConfigsViewOpen() || MenuScreen.INSTANCE.isCosmeticsViewOpen()
+                || MenuScreen.INSTANCE.isMessengerViewOpen()) return false;
 
         float footerX = x + 4.0F;
         float footerWidth = SIDEBAR_WIDTH - 8.0F;
@@ -562,7 +564,8 @@ public class BackgroundComponent extends AbstractComponent {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
-        if (isFullWidthPage()
+        if (MenuScreen.INSTANCE.isConfigsViewOpen() || MenuScreen.INSTANCE.isCosmeticsViewOpen()
+                || MenuScreen.INSTANCE.isMessengerViewOpen()
                 || !MathUtil.isHovered(mouseX, mouseY, x, configViewportY(), SIDEBAR_WIDTH, configViewportHeight())) return false;
         double maxScroll = Math.max(0.0F, configContentHeight(configManager.getConfigList().length) - configViewportHeight());
         if (maxScroll <= 0.01D) return false;
@@ -730,11 +733,6 @@ public class BackgroundComponent extends AbstractComponent {
 
     private boolean isCosmeticsTabActive() {
         return MenuScreen.INSTANCE.isCosmeticsViewOpen();
-    }
-
-    private static boolean isFullWidthPage() {
-        return MenuScreen.INSTANCE.isConfigsViewOpen() || MenuScreen.INSTANCE.isCosmeticsViewOpen()
-                || MenuScreen.INSTANCE.isMessengerViewOpen();
     }
 
     private static String topTabText(String id) {

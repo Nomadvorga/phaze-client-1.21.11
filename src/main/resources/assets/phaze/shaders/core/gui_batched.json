@@ -1,0 +1,15 @@
+{
+  "blend": {
+    "func": "add",
+    "srcrgb": "srcalpha",
+    "dstrgb": "1-srcalpha"
+  },
+  "vertex": "phaze:core/gui_batched",
+  "fragment": "phaze:core/gui_batched",
+  "attributes": ["Position", "Color", "RectBase", "RectSize", "Radius", "Params", "OutlineColor"],
+  "samplers": [],
+  "uniforms": [
+    { "name": "DynamicTransforms", "type": "uniform", "count": 1, "values": [ 0.0 ] },
+    { "name": "Projection", "type": "uniform", "count": 1, "values": [ 0.0 ] }
+  ]
+}

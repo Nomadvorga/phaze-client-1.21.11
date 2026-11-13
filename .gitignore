@@ -54,5 +54,5 @@ secrets.*
 id_rsa
 
 # Client runtime data written by dev/test runs
-Phaze/
-logs/
+/Phaze/
+/logs/
